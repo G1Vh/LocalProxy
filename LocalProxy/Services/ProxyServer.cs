@@ -64,7 +64,7 @@ public class ProxyServer : BackgroundService
     {
         try
         {
-            using var stream = client.GetStream();
+            await using var stream = client.GetStream();
             var requestLine = await ReadLineAsync(stream, cancellationToken);
 
             if (string.IsNullOrEmpty(requestLine))
@@ -150,7 +150,8 @@ public class ProxyServer : BackgroundService
         }
         finally
         {
-            targetStream?.Dispose();
+            if (targetStream != null) 
+                await targetStream.DisposeAsync();
             targetClient?.Dispose();
         }
     }

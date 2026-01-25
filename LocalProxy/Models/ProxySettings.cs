@@ -23,7 +23,7 @@ public class ProxySettings
     /// <summary>
     /// List of domain patterns to route through upstream proxy
     /// </summary>
-    public List<string> Domains { get; set; } = new();
+    public List<string> Domains { get; set; } = [];
 }
 
 /// <summary>

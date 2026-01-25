@@ -32,7 +32,7 @@ public class DomainMatcherTests
     public void Match_ExactDomain_ReturnsExpectedResult(string host, bool expected)
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "github.com" });
+        var matcher = CreateMatcher(["github.com"]);
 
         // Act
         var result = matcher.Match(host);
@@ -50,7 +50,7 @@ public class DomainMatcherTests
     public void Match_WildcardSubdomain_ReturnsExpectedResult(string host, bool expected)
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "*.githubcopilot.com" });
+        var matcher = CreateMatcher(["*.githubcopilot.com"]);
 
         // Act
         var result = matcher.Match(host);
@@ -68,7 +68,7 @@ public class DomainMatcherTests
     public void Match_NestedWildcard_ReturnsExpectedResult(string host, bool expected)
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "*.business.githubcopilot.com" });
+        var matcher = CreateMatcher(["*.business.githubcopilot.com"]);
 
         // Act
         var result = matcher.Match(host);
@@ -81,7 +81,7 @@ public class DomainMatcherTests
     public void Match_WithPort_StripsPortCorrectly()
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "github.com" });
+        var matcher = CreateMatcher(["github.com"]);
 
         // Act & Assert
         Assert.True(matcher.Match("github.com:443"));
@@ -93,7 +93,7 @@ public class DomainMatcherTests
     public void Match_PatternWithPath_IgnoresPath()
     {
         // Arrange - patterns with paths should have the path stripped
-        var matcher = CreateMatcher(new List<string> { "github.com/login/*", "api.github.com/user" });
+        var matcher = CreateMatcher(["github.com/login/*", "api.github.com/user"]);
 
         // Act & Assert - only domain is matched, path is ignored
         Assert.True(matcher.Match("github.com"));
@@ -105,7 +105,7 @@ public class DomainMatcherTests
     public void Match_EmptyHost_ReturnsFalse()
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "github.com" });
+        var matcher = CreateMatcher(["github.com"]);
 
         // Act & Assert
         Assert.False(matcher.Match(""));
@@ -116,7 +116,7 @@ public class DomainMatcherTests
     public void Match_EmptyDomainsList_ReturnsFalse()
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string>());
+        var matcher = CreateMatcher([]);
 
         // Act
         var result = matcher.Match("github.com");
@@ -129,7 +129,7 @@ public class DomainMatcherTests
     public void Match_CaseInsensitive_ReturnsTrue()
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "GitHub.com" });
+        var matcher = CreateMatcher(["GitHub.com"]);
 
         // Act & Assert
         Assert.True(matcher.Match("github.com"));
@@ -141,12 +141,11 @@ public class DomainMatcherTests
     public void Match_MultiplePatterns_MatchesAny()
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string>
-        {
+        var matcher = CreateMatcher([
             "github.com",
             "api.github.com",
             "*.githubcopilot.com"
-        });
+        ]);
 
         // Act & Assert
         Assert.True(matcher.Match("github.com"));
@@ -162,7 +161,7 @@ public class DomainMatcherTests
     public void MatchUrl_SimplifiesTo_Match(string host, bool expected)
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "github.com" });
+        var matcher = CreateMatcher(["github.com"]);
 
         // Act - MatchUrl now just delegates to Match, path is ignored
         var result = matcher.MatchUrl(host, "/any/path");
@@ -175,7 +174,7 @@ public class DomainMatcherTests
     public void MatchUrl_IgnoresPathCompletely()
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { "github.com" });
+        var matcher = CreateMatcher(["github.com"]);
 
         // Act & Assert - path should not matter at all
         Assert.True(matcher.MatchUrl("github.com", "/"));
@@ -189,7 +188,7 @@ public class DomainMatcherTests
     public void HotReload_UpdatesPatterns()
     {
         // Arrange
-        var settings = new ProxySettings { Domains = new List<string> { "github.com" } };
+        var settings = new ProxySettings { Domains = ["github.com"] };
         var optionsMonitorMock = new Mock<IOptionsMonitor<ProxySettings>>();
         optionsMonitorMock.Setup(m => m.CurrentValue).Returns(settings);
 
@@ -206,7 +205,7 @@ public class DomainMatcherTests
         Assert.False(matcher.Match("api.github.com"));
 
         // Act - simulate configuration change
-        var newSettings = new ProxySettings { Domains = new List<string> { "api.github.com" } };
+        var newSettings = new ProxySettings { Domains = ["api.github.com"] };
         optionsMonitorMock.Setup(m => m.CurrentValue).Returns(newSettings);
         changeCallback?.Invoke(newSettings, null);
 
@@ -221,7 +220,7 @@ public class DomainMatcherTests
     public void Match_EdgeCasePatterns_HandlesGracefully(string pattern)
     {
         // Arrange
-        var matcher = CreateMatcher(new List<string> { pattern });
+        var matcher = CreateMatcher([pattern]);
 
         // Act & Assert - shouldn't throw
         var result = matcher.Match("github.com");

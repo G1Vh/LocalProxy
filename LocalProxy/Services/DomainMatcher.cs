@@ -9,21 +9,19 @@ namespace LocalProxy.Services;
 /// </summary>
 public class DomainMatcher : IDomainMatcher
 {
-    private readonly IOptionsMonitor<ProxySettings> _optionsMonitor;
     private readonly ILogger<DomainMatcher> _logger;
-    private List<DomainPattern> _patterns = new();
-    private readonly object _lock = new();
+    private List<DomainPattern> _patterns = [];
+    private readonly Lock _lock = new();
 
     public DomainMatcher(IOptionsMonitor<ProxySettings> optionsMonitor, ILogger<DomainMatcher> logger)
     {
-        _optionsMonitor = optionsMonitor;
         _logger = logger;
 
         // Initial load
-        ReloadPatterns(_optionsMonitor.CurrentValue.Domains);
+        ReloadPatterns(optionsMonitor.CurrentValue.Domains);
 
         // Subscribe to configuration changes for hot-reload
-        _optionsMonitor.OnChange(settings =>
+        optionsMonitor.OnChange(settings =>
         {
             _logger.LogInformation("Configuration changed, reloading domain patterns...");
             ReloadPatterns(settings.Domains);
