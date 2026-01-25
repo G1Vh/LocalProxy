@@ -23,7 +23,7 @@
 
 ### 1. Скачать релиз
 
-Скачайте последнюю версию из [Releases](https://github.com/OWNER/REPO/releases):
+Скачайте последнюю версию из [Releases](https://github.com/G1Vh/LocalProxy/releases):
 - `LocalProxy-vX.X.X-win-x64.zip` — для 64-битных систем
 - `LocalProxy-vX.X.X-win-x86.zip` — для 32-битных систем
 
@@ -314,8 +314,8 @@ curl -v https://github.com
 ### Сборка из исходников
 
 ```powershell
-git clone https://github.com/OWNER/REPO.git
-cd LocalProxy.NET
+git clone https://github.com/G1Vh/LocalProxy.git
+cd LocalProxy
 dotnet restore
 dotnet build -c Release
 dotnet test
