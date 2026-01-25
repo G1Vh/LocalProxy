@@ -9,7 +9,7 @@ namespace LocalProxy.Services;
 /// <summary>
 /// Low-level TCP-based proxy server that handles both HTTP and HTTPS CONNECT
 /// </summary>
-public class ProxyServer : BackgroundService
+public partial class ProxyServer : BackgroundService
 {
     private readonly ILogger<ProxyServer> _logger;
     private readonly IOptionsMonitor<ProxySettings> _optionsMonitor;
@@ -35,12 +35,12 @@ public class ProxyServer : BackgroundService
         _listener = new TcpListener(IPAddress.Loopback, settings.Port);
         _listener.Start();
 
-        _logger.LogInformation("Proxy server listening on port {Port}", settings.Port);
-        _logger.LogInformation("Upstream proxy: {Status}",
+        LogServerListening(settings.Port);
+        LogUpstreamProxyStatus(
             settings.UpstreamProxy.Enabled
                 ? $"{settings.UpstreamProxy.Host}:{settings.UpstreamProxy.Port}"
                 : "disabled");
-        _logger.LogInformation("Loaded {Count} domain patterns", settings.Domains.Count);
+        LogDomainPatternsLoaded(settings.Domains.Count);
 
         try
         {
@@ -52,7 +52,7 @@ public class ProxyServer : BackgroundService
         }
         catch (OperationCanceledException)
         {
-            _logger.LogInformation("Proxy server shutting down...");
+            LogServerShuttingDown();
         }
         finally
         {
@@ -88,7 +88,7 @@ public class ProxyServer : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error handling client connection");
+            LogClientConnectionError(ex);
         }
         finally
         {
@@ -111,7 +111,7 @@ public class ProxyServer : BackgroundService
         var useUpstream = settings.UpstreamProxy.Enabled && _matcher.Match(target);
         var destination = useUpstream ? "PROXY" : "DIRECT";
 
-        _logger.LogInformation("CONNECT {Target} -> {Destination}", target, destination);
+        LogConnectRequest(target, destination);
 
         TcpClient? targetClient = null;
         NetworkStream? targetStream = null;
@@ -123,9 +123,9 @@ public class ProxyServer : BackgroundService
                 (targetStream, targetClient) = await ConnectViaProxyAsync(target, settings, cancellationToken);
                 if (targetStream == null)
                 {
-                    _logger.LogWarning("Upstream proxy failed for CONNECT {Target}, falling back to direct", target);
+                    LogConnectUpstreamFailedFallback(target);
                     (targetStream, targetClient) = await ConnectDirectAsync(target, settings, cancellationToken);
-                    _logger.LogInformation("CONNECT {Target} -> DIRECT (fallback)", target);
+                    LogConnectDirectFallback(target);
                 }
             }
             else
@@ -189,7 +189,7 @@ public class ProxyServer : BackgroundService
         var useUpstream = settings.UpstreamProxy.Enabled && _matcher.Match(host);
         var destination = useUpstream ? "PROXY" : "DIRECT";
 
-        _logger.LogInformation("{Method} {Url} -> {Destination}", method, targetUri, destination);
+        LogHttpRequest(method, targetUri, destination);
 
         try
         {
@@ -229,7 +229,7 @@ public class ProxyServer : BackgroundService
             }
             catch when (useUpstream)
             {
-                _logger.LogWarning("Upstream proxy failed for {Url}, falling back to direct", targetUri);
+                LogHttpUpstreamFailedFallback(targetUri);
                 request = new HttpRequestMessage(new HttpMethod(method), targetUri);
                 foreach (var header in headers)
                 {
@@ -240,7 +240,7 @@ public class ProxyServer : BackgroundService
                 }
                 var httpClient = _httpClientFactory.CreateClient("direct");
                 response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                _logger.LogInformation("{Method} {Url} -> DIRECT (fallback)", method, targetUri);
+                LogHttpDirectFallback(method, targetUri);
             }
 
             // Send response
@@ -268,7 +268,7 @@ public class ProxyServer : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error proxying HTTP request to {Url}", targetUri);
+            LogHttpProxyError(ex, targetUri);
             await SendResponseAsync(clientStream, "HTTP/1.1 502 Bad Gateway\r\n\r\n", cancellationToken);
         }
     }
@@ -312,7 +312,7 @@ public class ProxyServer : BackgroundService
                 (!responseLine.StartsWith("HTTP/1.1 200", StringComparison.OrdinalIgnoreCase) &&
                  !responseLine.StartsWith("HTTP/1.0 200", StringComparison.OrdinalIgnoreCase)))
             {
-                _logger.LogWarning("Upstream proxy rejected CONNECT: {Response}", responseLine);
+                LogUpstreamProxyRejectedConnect(responseLine ?? string.Empty);
                 tcpClient.Dispose();
                 return (null, null);
             }
@@ -329,7 +329,7 @@ public class ProxyServer : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("Failed to connect via upstream proxy: {Error}", ex.Message);
+            LogUpstreamProxyConnectionFailed(ex.Message);
             tcpClient?.Dispose();
             return (null, null);
         }
@@ -368,7 +368,7 @@ public class ProxyServer : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError("Failed to connect directly to {Host}: {Error}", targetHost, ex.Message);
+            LogDirectConnectionFailed(targetHost, ex.Message);
             tcpClient?.Dispose();
             return (null, null);
         }

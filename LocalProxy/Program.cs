@@ -1,3 +1,4 @@
+using LocalProxy;
 using LocalProxy.Models;
 using LocalProxy.Services;
 using System.Net;
@@ -60,13 +61,4 @@ builder.Host.UseWindowsService();
 
 var app = builder.Build();
 
-// Handle graceful shutdown
-var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-lifetime.ApplicationStopping.Register(() =>
-{
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    logger.LogInformation("Proxy server shutting down...");
-});
-
-app.Run();
-
+await app.RunAsync();

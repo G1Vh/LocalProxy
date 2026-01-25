@@ -154,38 +154,9 @@ public class DomainMatcherTests
         Assert.False(matcher.Match("example.com"));
     }
 
-    [Theory]
-    [InlineData("github.com", true)]
-    [InlineData("api.github.com", false)]
-    [InlineData("github.com:443", true)]
-    public void MatchUrl_SimplifiesTo_Match(string host, bool expected)
-    {
-        // Arrange
-        var matcher = CreateMatcher(["github.com"]);
-
-        // Act - MatchUrl now just delegates to Match, path is ignored
-        var result = matcher.MatchUrl(host, "/any/path");
-
-        // Assert
-        Assert.Equal(expected, result);
-    }
-
-    [Fact]
-    public void MatchUrl_IgnoresPathCompletely()
-    {
-        // Arrange
-        var matcher = CreateMatcher(["github.com"]);
-
-        // Act & Assert - path should not matter at all
-        Assert.True(matcher.MatchUrl("github.com", "/"));
-        Assert.True(matcher.MatchUrl("github.com", "/login"));
-        Assert.True(matcher.MatchUrl("github.com", "/api/v1/user"));
-        Assert.True(matcher.MatchUrl("github.com", "/login?redirect=/home"));
-        Assert.False(matcher.MatchUrl("api.github.com", "/any/path"));
-    }
-
     [Fact]
     public void HotReload_UpdatesPatterns()
+
     {
         // Arrange
         var settings = new ProxySettings { Domains = ["github.com"] };

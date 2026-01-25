@@ -7,7 +7,7 @@ namespace LocalProxy.Services;
 /// Domain pattern matcher with hot-reload support.
 /// Supports patterns: exact domain (example.com), wildcard subdomain (*.example.com)
 /// </summary>
-public class DomainMatcher : IDomainMatcher
+public partial class DomainMatcher : IDomainMatcher
 {
     private readonly ILogger<DomainMatcher> _logger;
     private List<DomainPattern> _patterns = [];
@@ -23,7 +23,7 @@ public class DomainMatcher : IDomainMatcher
         // Subscribe to configuration changes for hot-reload
         optionsMonitor.OnChange(settings =>
         {
-            _logger.LogInformation("Configuration changed, reloading domain patterns...");
+            LogConfigurationChanged();
             ReloadPatterns(settings.Domains);
         });
     }
@@ -38,10 +38,7 @@ public class DomainMatcher : IDomainMatcher
                 continue;
 
             var parsed = ParsePattern(pattern.Trim());
-            if (parsed != null)
-            {
-                newPatterns.Add(parsed);
-            }
+            newPatterns.Add(parsed);
         }
 
         lock (_lock)
@@ -49,10 +46,10 @@ public class DomainMatcher : IDomainMatcher
             _patterns = newPatterns;
         }
 
-        _logger.LogInformation("Loaded {Count} domain patterns", newPatterns.Count);
+        LogDomainPatternsLoaded(newPatterns.Count);
     }
 
-    private static DomainPattern? ParsePattern(string pattern)
+    private static DomainPattern ParsePattern(string pattern)
     {
         // Strip path if present (paths are not supported, only domains)
         var slashIndex = pattern.IndexOf('/');
@@ -106,13 +103,6 @@ public class DomainMatcher : IDomainMatcher
         }
 
         return false;
-    }
-
-    /// <inheritdoc />
-    public bool MatchUrl(string host, string path)
-    {
-        // Simplified: paths are not supported, just match domain
-        return Match(host);
     }
 
     private static bool MatchDomain(string host, DomainPattern pattern)
