@@ -12,4 +12,8 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.2" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Manage-LocalProxyService.ps1" CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" />
+  </ItemGroup>
+
 </Project>

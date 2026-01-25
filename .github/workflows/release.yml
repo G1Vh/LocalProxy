@@ -1,0 +1,133 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build -c Release --no-restore
+      
+      - name: Run tests
+        run: dotnet test -c Release --no-build --verbosity normal
+      
+      - name: Publish Windows x64
+        run: dotnet publish LocalProxy/LocalProxy.csproj -c Release -r win-x64 --self-contained false -o ./publish/win-x64
+      
+      - name: Publish Windows x86
+        run: dotnet publish LocalProxy/LocalProxy.csproj -c Release -r win-x86 --self-contained false -o ./publish/win-x86
+      
+      - name: Create archives
+        shell: pwsh
+        run: |
+          # Создание ZIP архивов
+          Compress-Archive -Path ./publish/win-x64/* -DestinationPath ./LocalProxy-${{ github.event.inputs.version }}-win-x64.zip
+          Compress-Archive -Path ./publish/win-x86/* -DestinationPath ./LocalProxy-${{ github.event.inputs.version }}-win-x86.zip
+          
+          # Вывод информации о файлах
+          Write-Host "Created release archives:"
+          Get-ChildItem -Filter "LocalProxy-*.zip" | ForEach-Object {
+            Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1MB, 2)) MB"
+          }
+      
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem -Filter "LocalProxy-*.zip" | ForEach-Object {
+            $hash = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash
+            "$hash  $($_.Name)" | Out-File -FilePath "checksums.txt" -Append -Encoding UTF8
+          }
+          
+          Write-Host "`nChecksums:"
+          Get-Content checksums.txt
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: LocalProxy.NET ${{ github.event.inputs.version }}
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease }}
+          body: |
+            ## LocalProxy.NET ${{ github.event.inputs.version }}
+            
+            Селективный HTTP/HTTPS прокси-сервер для Windows с автоматической установкой службы.
+            
+            ### 📦 Установка
+            
+            1. Скачайте архив для вашей архитектуры (x64 или x86)
+            2. Распакуйте в любую папку
+            3. Отредактируйте `appsettings.json`
+            4. Запустите PowerShell от администратора и выполните:
+               ```powershell
+               .\Manage-LocalProxyService.ps1
+               ```
+            5. Выберите "Установить службу" в меню
+            
+            ### ✨ Возможности
+            
+            - ✅ HTTP и HTTPS через CONNECT туннелирование
+            - ✅ Селективная маршрутизация по доменам
+            - ✅ Hot-reload конфигурации
+            - ✅ Автоматический fallback при ошибках
+            - ✅ Windows Service с автозапуском
+            - ✅ Интерактивная установка через PowerShell
+            - ✅ Wildcard домены (*.example.com)
+            - ✅ Basic Auth для upstream прокси
+            
+            ### 📋 Требования
+            
+            - Windows 10/11 или Windows Server
+            - .NET 10 Runtime ([скачать](https://dotnet.microsoft.com/download/dotnet/10.0))
+            - Права администратора (для установки службы)
+            
+            ### 🔐 Checksums (SHA256)
+            
+            См. файл `checksums.txt` во вложениях.
+            
+            ### 📚 Документация
+            
+            Полная документация: [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
+            
+          files: |
+            LocalProxy-${{ github.event.inputs.version }}-win-x64.zip
+            LocalProxy-${{ github.event.inputs.version }}-win-x86.zip
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalProxy-${{ github.event.inputs.version }}
+          path: |
+            LocalProxy-${{ github.event.inputs.version }}-win-x64.zip
+            LocalProxy-${{ github.event.inputs.version }}-win-x86.zip
+            checksums.txt
+          retention-days: 90

@@ -5,31 +5,40 @@
 ## Возможности
 
 - ✅ **HTTP и HTTPS** — полная поддержка через CONNECT туннелирование
-- ✅ **Селективная маршрутизация** — гибкая настройка доменов через конфигурацию
-- ✅ **Hot-reload** — изменение конфигурации без перезапуска
-- ✅ **Fallback** — автоматическое переключение на прямое соединение при ошибке upstream
-- ✅ **Windows Service** — встроенная поддержка запуска как службы Windows
-- ✅ **Wildcard поддомены** — поддержка паттернов `*.example.com`
-- ✅ **Аутентификация** — Basic Auth для upstream прокси
-- ✅ **Настраиваемые таймауты** — через конфигурацию
+- ✅ **Селективная маршрутизация** — гибкая настройка доменов
+- ✅ **Hot-reload** — изменение списка доменов без перезапуска
+- ✅ **Автоматический Fallback** — при недоступности upstream переключается на прямое соединение
+- ✅ **Windows Service** — автоматический запуск при старте системы
+- ✅ **Автоустановка** — PowerShell скрипт для установки службы и настройки прокси
+- ✅ **Wildcard домены** — поддержка паттернов `*.example.com`
+- ✅ **Basic Auth** — аутентификация для upstream прокси
 
 ## Требования
 
 - .NET 10 Runtime
 - Windows 10/11 или Windows Server
+- Права администратора (для установки службы)
 
 ## Быстрый старт
 
-### 1. Сборка проекта
+### 1. Скачать релиз
+
+Скачайте последнюю версию из [Releases](https://github.com/OWNER/REPO/releases):
+- `LocalProxy-vX.X.X-win-x64.zip` — для 64-битных систем
+- `LocalProxy-vX.X.X-win-x86.zip` — для 32-битных систем
+
+Или соберите из исходников:
+
+### 2. Сборка из исходников
 
 ```powershell
-dotnet build -c Release
-dotnet publish -c Release -o ./publish
+cd LocalProxy
+.\publish.bat
 ```
 
-### 2. Настройка конфигурации
+### 3. Настройка
 
-Отредактируйте `appsettings.json`:
+Отредактируйте `publish/appsettings.json`:
 
 ```json
 {
@@ -53,239 +62,277 @@ dotnet publish -c Release -o ./publish
 }
 ```
 
-### 3. Запуск
+### 4. Установка
 
-*Режим разработки:*
-```powershell
-dotnet run
-```
+**Автоматическая установка (рекомендуется):**
 
-*Production:*
 ```powershell
 cd publish
-.\LocalProxy.exe
+.\Manage-LocalProxyService.ps1
 ```
+
+При запуске без параметров откроется **интерактивное меню**:
+
+```
+╔═══════════════════════════════════════════════════╗
+║                                                   ║
+║          LocalProxy Service Manager               ║
+║                                                   ║
+╚═══════════════════════════════════════════════════╝
+
+  1. Установить службу
+     └─ Создать Windows Service + настроить системный прокси
+
+  2. Удалить службу
+     └─ Удалить Windows Service + отключить системный прокси
+
+  3. Показать статус
+     └─ Проверить состояние службы и настроек
+
+  4. Выход
+
+Выберите действие [1-4]:
+```
+
+**Или используйте параметры для автоматизации:**
+
+```powershell
+# Установка
+.\Manage-LocalProxyService.ps1 -Action Install
+
+# Установка с кастомным портом
+.\Manage-LocalProxyService.ps1 -Action Install -Port 8080
+
+# Удаление
+.\Manage-LocalProxyService.ps1 -Action Uninstall
+
+# Проверка статуса
+.\Manage-LocalProxyService.ps1 -Action Status
+```
+
+Скрипт автоматически:
+- Создаст Windows Service с автозапуском
+- Настроит системный прокси Windows
+- Запустит службу
 
 ## Конфигурация
 
-### Секция `Port`
-Порт локального прокси-сервера (по умолчанию: `3128`).
+### Основные параметры
 
-### Секция `UpstreamProxy`
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `Enabled` | `bool` | Включить маршрутизацию через внешний прокси |
-| `Host` | `string` | Адрес upstream прокси |
-| `Port` | `int` | Порт upstream прокси |
-| `Username` | `string` | Имя пользователя для Basic Auth (необязательно) |
-| `Password` | `string` | Пароль для Basic Auth (необязательно) |
-
-### Секция `Timeouts`
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `HttpRequestSeconds` | `int` | Таймаут HTTP-запросов в секундах (по умолчанию: 30) |
-| `TcpConnectSeconds` | `int` | Таймаут TCP-соединений в секундах (по умолчанию: 10) |
-
-### Секция `Domains`
-Массив доменных паттернов для маршрутизации через upstream прокси.
-
-**Поддерживаемые форматы:**
-- `example.com` — точное совпадение домена
-- `*.example.com` — все поддомены (не включает сам `example.com`)
-
-**Примеры:**
 ```json
-"Domains": [
-  "github.com",              // github.com -> PROXY
-  "api.github.com",          // api.github.com -> PROXY
-  "*.githubcopilot.com",     // api.githubcopilot.com -> PROXY
-                             // githubcopilot.com -> DIRECT
-  "*.business.githubcopilot.com"  // dashboard.business.githubcopilot.com -> PROXY
-]
+{
+  "Port": 3128,                    // Порт локального прокси
+  "UpstreamProxy": {
+    "Enabled": true,               // Использовать внешний прокси
+    "Host": "proxy.example.com",   // Адрес upstream
+    "Port": 8080,                  // Порт upstream
+    "Username": "",                // Basic Auth (опционально)
+    "Password": ""                 // Basic Auth (опционально)
+  },
+  "Timeouts": {
+    "HttpRequestSeconds": 30,      // Таймаут HTTP запросов
+    "TcpConnectSeconds": 10        // Таймаут TCP подключений
+  },
+  "Domains": [                     // Домены через upstream
+    "example.com",                 // Точное совпадение
+    "*.example.com"                // Wildcard поддомены
+  ]
+}
 ```
 
-## Установка как Windows Service
+**Паттерны доменов:**
+- `example.com` — только этот домен
+- `*.example.com` — все поддомены (но не сам `example.com`)
+- Пути игнорируются, проверяется только домен
 
-### Вариант 1: Native Windows Service (встроенная поддержка)
+**Hot-reload:** Изменения в `Domains` применяются автоматически без перезапуска.
+
+## Управление службой
+
+**Через скрипт:**
 
 ```powershell
-# 1. Скопируйте publish в C:\Services\LocalProxy\
+# Интерактивное меню
+.\Manage-LocalProxyService.ps1
 
-# 2. Создайте службу
-sc.exe create LocalProxyService binPath= "C:\Services\LocalProxy\LocalProxy.exe" start= auto DisplayName= "Local Proxy Server"
+# Или напрямую с параметрами
+.\Manage-LocalProxyService.ps1 -Action Status
+.\Manage-LocalProxyService.ps1 -Action Uninstall
+```
 
-# 3. Настройте описание
-sc.exe description LocalProxyService "Selective routing proxy server"
+**Через PowerShell:**
 
-# 4. Настройте автоматический перезапуск при сбое
-sc.exe failure LocalProxyService reset= 86400 actions= restart/5000/restart/5000/restart/5000
-
-# 5. Запустите службу
-sc.exe start LocalProxyService
-
+```powershell
 # Проверка статуса
-sc.exe query LocalProxyService
+Get-Service LocalProxyService
 
-# Остановка
-sc.exe stop LocalProxyService
+# Остановка/запуск
+Stop-Service LocalProxyService
+Start-Service LocalProxyService
 
-# Удаление
-sc.exe delete LocalProxyService
-```
+# Перезапуск после изменения настроек
+Restart-Service LocalProxyService
 
-### Вариант 2: Task Scheduler (автозапуск при входе)
-
-```powershell
-$Action = New-ScheduledTaskAction -Execute "C:\Services\LocalProxy\LocalProxy.exe" -WorkingDirectory "C:\Services\LocalProxy"
-$Trigger = New-ScheduledTaskTrigger -AtStartup
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
-$Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-
-Register-ScheduledTask -TaskName "LocalProxyServer" -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal
-```
-
-## Логирование
-
-Логи выводятся в консоль с уровнями:
-- `Information` — основные события (старт, запросы, fallback)
-- `Warning` — ошибки upstream прокси с fallback
-- `Error` — критические ошибки
-
-**Формат логов:**
-```
-2026-01-24 22:10:26 info: LocalProxy.Services.ProxyServer[0] CONNECT api.github.com:443 -> PROXY
-2026-01-24 22:10:27 info: LocalProxy.Services.ProxyServer[0] GET http://example.com/ -> DIRECT
-2026-01-24 22:10:28 warn: Upstream proxy failed for CONNECT github.com:443, falling back to direct
+# Логи Windows Service
+Get-EventLog -LogName Application -Source LocalProxyService -Newest 20
 ```
 
 ## Архитектура
 
 ```
-┌─────────────────┐
-│  Client (Browser)  │
-└────────┬─────────┘
-         │
-         ▼
-┌─────────────────────────────────┐
-│   LocalProxy (localhost:3128)   │
-│   ┌──────────────────────────┐  │
-│   │  ProxyServer (TcpListener) │  │
-│   │  - HandleConnectAsync    │  │
-│   │  - HandleHttpAsync       │  │
-│   └──────────┬───────────────┘  │
-│              │                   │
-│              ▼                   │
-│   ┌──────────────────────────┐  │
-│   │  DomainMatcher           │  │
-│   │  (Hot-reload patterns)   │  │
-│   └──────────┬───────────────┘  │
-│              │                   │
-└──────────────┼───────────────────┘
-               │
-       ┌───────┴────────┐
-       │                │
-       ▼                ▼
-┌─────────────┐  ┌──────────────┐
-│   DIRECT    │  │ Upstream Proxy│
-│ (github.com)│  │(api.github.com)│
-└─────────────┘  └──────────────┘
+Client → LocalProxy (localhost:3128) → DomainMatcher
+                                              ↓
+                                    Match domain?
+                                    ↙          ↘
+                              Yes: PROXY    No: DIRECT
+                                  ↓              ↓
+                          Upstream Proxy    Target Host
+                                  ↓              ↓
+                            Target Host          
 ```
 
-### Основные компоненты:
+**Компоненты:**
+- **ProxyServer** — TCP-сервер на `TcpListener`, обработка HTTP/HTTPS CONNECT
+- **DomainMatcher** — маршрутизация по паттернам с hot-reload
+- **ProxySettings** — конфигурация с binding из `appsettings.json`
 
-1. **ProxyServer** (`Services/ProxyServer.cs`) — низкоуровневый TCP-сервер на `TcpListener`
-   - Парсинг HTTP-запросов
-   - CONNECT туннелирование для HTTPS
-   - Fallback логика
-
-2. **DomainMatcher** (`Services/DomainMatcher.cs`) — сопоставление доменов с паттернами
-   - Hot-reload через `IOptionsMonitor`
-   - Wildcard поддомены
-   - Thread-safe кэширование
-
-3. **ProxySettings** (`Models/ProxySettings.cs`) — конфигурационные DTO
-   - Binding из `appsettings.json`
-   - Helper методы для upstream proxy URL
-
-## Как это работает
-
-### HTTPS (CONNECT туннелирование)
-1. Клиент отправляет `CONNECT github.com:443`
-2. `DomainMatcher` проверяет домен по паттернам
-3. Если совпадение → устанавливается туннель через upstream прокси
-4. Иначе → прямое TCP-соединение к целевому хосту
-5. Отправляется `200 Connection Established`
-6. Начинается bidirectional копирование байтов между клиентом и целью
-
-### HTTP
-1. Клиент отправляет `GET http://example.com/`
-2. `DomainMatcher` проверяет домен
-3. Если совпадение → `HttpClient` с `WebProxy` отправляет запрос через upstream
-4. Иначе → `HttpClient` отправляет напрямую
-5. Ответ копируется обратно клиенту
-
-### Fallback
-При ошибке upstream прокси:
-1. Логируется предупреждение
-2. Автоматически создаётся прямое соединение
-3. Запрос помечается как `DIRECT (fallback)`
-
-## Тестирование
-
-Запуск тестов:
-```powershell
-dotnet test
-```
-
-Тесты покрывают:
-- ✅ Сопоставление доменов (точное, wildcard)
-- ✅ Hot-reload конфигурации
-- ✅ Парсинг паттернов с путями (игнорируются)
-
-## Производительность
-
-- **Latency overhead:** ~1-2ms для маршрутизации
-- **Memory:** ~20-30MB в idle
-- **Connections:** Поддержка тысяч одновременных соединений
-- **Hot-reload:** <100ms на перезагрузку паттернов
+**HTTPS:** Прозрачное CONNECT туннелирование, SSL/TLS не дешифруется  
+**Fallback:** При ошибке upstream автоматически переключается на прямое соединение
 
 ## Troubleshooting
 
 ### Прокси не работает
 
-**Проверьте:**
-1. Порт 3128 свободен: `netstat -ano | findstr :3128`
-2. Системный прокси настроен: `Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | Select ProxyEnable, ProxyServer`
-3. Логи показывают запросы
+```powershell
+# Проверка службы
+Get-Service LocalProxyService  # Должна быть Running
 
-### ERR_SSL_PROTOCOL_ERROR
+# Проверка порта
+netstat -ano | findstr :3128  # Должен слушать 127.0.0.1:3128
 
-**Причина:** Проблема с CONNECT туннелированием
+# Проверка системного прокси
+Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | Select ProxyEnable, ProxyServer
+# ProxyEnable: 1, ProxyServer: localhost:3128
+```
 
-**Решение:**
-1. Убедитесь, что домен в списке `Domains` для upstream
-2. Проверьте доступность upstream прокси
-3. Проверьте логи на ошибки соединения
+**Решение:** Переустановите через `.\Manage-LocalProxyService.ps1 -Action Uninstall` и `-Action Install`
 
-### Upstream прокси недоступен
+### HTTPS не работает (ERR_SSL_PROTOCOL_ERROR)
 
-**Поведение:** Автоматический fallback на DIRECT
+**Причины:**
+- Upstream прокси недоступен
+- Неверная аутентификация
+- Домен не в списке `Domains`
 
 **Проверка:**
 ```powershell
-# Проверка доступности upstream
-Test-NetConnection -ComputerName proxy.company.com -Port 8080
+# Проверить доступность upstream
+Test-NetConnection proxy.example.com -Port 8080
+
+# Временно отключить upstream для теста
+# В appsettings.json: "Enabled": false
 ```
+
+### Служба не запускается
+
+```powershell
+# Проверить логи
+Get-EventLog -LogName Application -Source LocalProxyService -Newest 5
+
+# Запустить в консоли для отладки
+cd publish
+.\LocalProxy.exe
+```
+
+**Частые причины:**
+- Порт 3128 занят (смените в `appsettings.json`)
+- Ошибки в JSON конфигурации
+- Отсутствует `appsettings.json`
 
 ### Hot-reload не работает
 
-**Причина:** Изменение `appsettings.json` не подхватывается
+Только изменения в `Domains` перезагружаются автоматически. Для других параметров:
 
-**Решение:**
-1. Убедитесь, что `reloadOnChange: true` в `Program.cs`
-2. Сохраните файл (flush на диск)
-3. Проверьте права на файл
+```powershell
+Restart-Service LocalProxyService
+```
+
+## Тестирование
+
+```powershell
+# Запуск всех тестов
+dotnet test
+
+# Ручной тест
+cd LocalProxy
+dotnet run
+
+# В другом терминале
+$env:HTTP_PROXY="http://localhost:3128"
+$env:HTTPS_PROXY="http://localhost:3128"
+curl -v https://github.com
+```
+
+## Логирование
+
+Настройка уровня логов в `appsettings.json`:
+
+```json
+"Logging": {
+  "LogLevel": {
+    "Default": "Information",
+    "Microsoft.AspNetCore": "Warning",
+    "LocalProxy": "Debug"
+  }
+}
+```
+
+**Формат:**
+```
+2026-01-25 10:30:45 info: LocalProxy.Services.ProxyServer[0] Proxy server listening on port 3128
+2026-01-25 10:30:50 info: CONNECT github.com:443 -> PROXY
+2026-01-25 10:30:51 info: CONNECT example.com:443 -> DIRECT
+2026-01-25 10:30:52 warn: Upstream proxy failed, falling back to direct
+```
+
+## Производительность
+
+- **Latency:** ~1-2ms overhead
+- **Memory:** ~20-30MB idle, ~40-80MB под нагрузкой
+- **Connections:** 1000+ одновременных соединений
+- **CPU:** <1% в idle
+
+## Известные ограничения
+
+- Hot-reload только для `Domains`, остальные параметры требуют перезапуска
+- Один upstream прокси (нельзя разные upstream для разных доменов)
+- Только доменные паттерны (нет IP-based маршрутизации)
+- Только HTTP/HTTPS (нет SOCKS/FTP)
+
+## Разработка
+
+### Сборка из исходников
+
+```powershell
+git clone https://github.com/OWNER/REPO.git
+cd LocalProxy.NET
+dotnet restore
+dotnet build -c Release
+dotnet test
+cd LocalProxy
+.\publish.bat
+```
+
+### Создание релиза
+
+Релизы создаются автоматически через GitHub Actions:
+
+1. Обновите версию в `LocalProxy/LocalProxy.csproj`
+2. Запустите workflow **"Create Release"** на GitHub
+3. Укажите версию (например, `v0.3.0`)
+
+Подробнее: [.github/ACTIONS.md](.github/ACTIONS.md)
 
 ## Лицензия
 
-MIT License
+MIT License - см. [LICENSE](LICENSE)
