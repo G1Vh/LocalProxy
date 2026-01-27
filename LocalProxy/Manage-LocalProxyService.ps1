@@ -8,6 +8,14 @@
     Скрипт устанавливает/удаляет LocalProxy как службу Windows с автозапуском
     и управляет настройками системного прокси.
     
+    При включении прокси:
+    - Настраивает системный прокси в реестре Windows
+    - Устанавливает переменные среды HTTP_PROXY и HTTPS_PROXY
+    
+    При отключении прокси:
+    - Отключает системный прокси в реестре Windows
+    - Удаляет переменные среды HTTP_PROXY и HTTPS_PROXY
+    
     При запуске без параметров открывается интерактивное меню.
 
 .PARAMETER Action
@@ -121,7 +129,7 @@ function Install-LocalProxyService {
     }
     
     # Настройка системного прокси
-    Write-ColorOutput "`nНастройка системного прокси..." "Cyan"
+    Write-ColorOutput "`nНастройка системного прокси и переменных среды..." "Cyan"
     Set-SystemProxy -Enable $true -Port $Port
     
     Write-ColorOutput "`n=== Установка завершена ===" "Green"
@@ -159,7 +167,7 @@ function Uninstall-LocalProxyService {
     }
     
     # Отключение системного прокси
-    Write-ColorOutput "`nОтключение системного прокси..." "Cyan"
+    Write-ColorOutput "`nОтключение системного прокси и удаление переменных среды..." "Cyan"
     Set-SystemProxy -Enable $false
     
     Write-ColorOutput "`n=== Удаление завершено ===" "Green"
@@ -172,15 +180,28 @@ function Set-SystemProxy {
     )
     
     $regPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+    $proxyUrl = "http://localhost:$Port"
     
     try {
         if ($Enable) {
+            # Настройка системного прокси в реестре
             Set-ItemProperty -Path $regPath -Name ProxyEnable -Value 1
             Set-ItemProperty -Path $regPath -Name ProxyServer -Value "localhost:$Port"
             Write-ColorOutput "Системный прокси включен: localhost:$Port" "Green"
+            
+            # Установка переменных среды HTTP_PROXY и HTTPS_PROXY
+            [System.Environment]::SetEnvironmentVariable("HTTP_PROXY", $proxyUrl, [System.EnvironmentVariableTarget]::User)
+            [System.Environment]::SetEnvironmentVariable("HTTPS_PROXY", $proxyUrl, [System.EnvironmentVariableTarget]::User)
+            Write-ColorOutput "Переменные среды HTTP_PROXY и HTTPS_PROXY установлены: $proxyUrl" "Green"
         } else {
+            # Отключение системного прокси в реестре
             Set-ItemProperty -Path $regPath -Name ProxyEnable -Value 0
             Write-ColorOutput "Системный прокси отключен" "Green"
+            
+            # Удаление переменных среды HTTP_PROXY и HTTPS_PROXY
+            [System.Environment]::SetEnvironmentVariable("HTTP_PROXY", $null, [System.EnvironmentVariableTarget]::User)
+            [System.Environment]::SetEnvironmentVariable("HTTPS_PROXY", $null, [System.EnvironmentVariableTarget]::User)
+            Write-ColorOutput "Переменные среды HTTP_PROXY и HTTPS_PROXY удалены" "Green"
         }
         
         # Уведомление системы об изменении настроек прокси
@@ -226,6 +247,22 @@ function Show-Status {
         Write-ColorOutput "  Включен: $proxyServer" "Green"
     } else {
         Write-ColorOutput "  Отключен" "Red"
+    }
+    
+    # Проверка переменных среды
+    $httpProxy = [System.Environment]::GetEnvironmentVariable("HTTP_PROXY", [System.EnvironmentVariableTarget]::User)
+    $httpsProxy = [System.Environment]::GetEnvironmentVariable("HTTPS_PROXY", [System.EnvironmentVariableTarget]::User)
+    
+    Write-ColorOutput "`nПеременные среды:" "Yellow"
+    if ($httpProxy) {
+        Write-ColorOutput "  HTTP_PROXY: $httpProxy" "Green"
+    } else {
+        Write-ColorOutput "  HTTP_PROXY: не установлена" "Red"
+    }
+    if ($httpsProxy) {
+        Write-ColorOutput "  HTTPS_PROXY: $httpsProxy" "Green"
+    } else {
+        Write-ColorOutput "  HTTPS_PROXY: не установлена" "Red"
     }
     
     # Проверка порта

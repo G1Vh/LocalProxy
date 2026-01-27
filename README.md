@@ -80,10 +80,10 @@ cd publish
 ╚═══════════════════════════════════════════════════╝
 
   1. Установить службу
-     └─ Создать Windows Service + настроить системный прокси
+     └─ Создать Windows Service + настроить системный прокси + установить переменные среды
 
   2. Удалить службу
-     └─ Удалить Windows Service + отключить системный прокси
+     └─ Удалить Windows Service + отключить системный прокси + удалить переменные среды
 
   3. Показать статус
      └─ Проверить состояние службы и настроек
@@ -112,6 +112,7 @@ cd publish
 Скрипт автоматически:
 - Создаст Windows Service с автозапуском
 - Настроит системный прокси Windows
+- Установит переменные среды HTTP_PROXY и HTTPS_PROXY
 - Запустит службу
 
 **Паттерны доменов:**
@@ -150,6 +151,11 @@ netstat -ano | findstr :3128  # Должен слушать 127.0.0.1:3128
 # Проверка системного прокси
 Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | Select ProxyEnable, ProxyServer
 # ProxyEnable: 1, ProxyServer: localhost:3128
+
+# Проверка переменных среды
+[System.Environment]::GetEnvironmentVariable("HTTP_PROXY", [System.EnvironmentVariableTarget]::User)
+[System.Environment]::GetEnvironmentVariable("HTTPS_PROXY", [System.EnvironmentVariableTarget]::User)
+# Должны быть: http://localhost:3128
 ```
 
 **Решение:** Переустановите через `.\Manage-LocalProxyService.ps1 -Action Uninstall` и `-Action Install`
