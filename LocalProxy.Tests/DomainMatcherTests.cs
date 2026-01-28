@@ -3,7 +3,6 @@ using LocalProxy.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
-using Xunit;
 
 namespace LocalProxy.Tests;
 

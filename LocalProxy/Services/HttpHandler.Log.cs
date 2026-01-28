@@ -1,5 +1,3 @@
-using System.Net;
-
 namespace LocalProxy.Services;
 
 public partial class HttpHandler
