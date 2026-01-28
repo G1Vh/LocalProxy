@@ -14,6 +14,10 @@ builder.Services.Configure<ProxySettings>(builder.Configuration);
 // Register domain matcher as singleton (it handles hot-reload internally)
 builder.Services.AddSingleton<IDomainMatcher, DomainMatcher>();
 
+// Register protocol handlers
+builder.Services.AddSingleton<HttpHandler>();
+builder.Services.AddSingleton<Socks5Handler>();
+
 // Register the TCP-based proxy server as a hosted service
 builder.Services.AddHostedService<ProxyServer>();
 

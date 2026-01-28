@@ -1,10 +1,12 @@
 # LocalProxy.NET
 
-Селективный HTTP/HTTPS прокси-сервер на .NET 10, который направляет запросы к определённым доменам через внешний прокси, остальные — напрямую.
+Селективный HTTP/HTTPS/SOCKS5 прокси-сервер на .NET 10, который направляет запросы к определённым доменам через внешний прокси, остальные — напрямую.
 
 ## Возможности
 
 - ✅ **HTTP и HTTPS** — полная поддержка через CONNECT туннелирование
+- ✅ **SOCKS5** — поддержка для SSH и других TCP протоколов (например, git@github.com)
+- ✅ **Единый порт** — все протоколы на одном порту с автоопределением
 - ✅ **Селективная маршрутизация** — гибкая настройка доменов
 - ✅ **Hot-reload** — изменение списка доменов без перезапуска
 - ✅ **Автоматический Fallback** — при недоступности upstream переключается на прямое соединение
@@ -123,19 +125,25 @@ cd publish
 ## Архитектура
 
 ```
-Client → LocalProxy (localhost:3128) → DomainMatcher
-                                              ↓
-                                    Match domain?
-                                    ↙          ↘
-                              Yes: PROXY    No: DIRECT
-                                  ↓              ↓
-                          Upstream Proxy    Target Host
-                                  ↓              ↓
-                            Target Host          
+Client → LocalProxy (localhost:3128) → Protocol Detection (first byte)
+                                               ↓
+                                   ┌───────────┴───────────┐
+                                   ↓                       ↓
+                            HTTP/HTTPS               SOCKS5 (0x05)
+                              (ASCII)                     ↓
+                                   ↓                 Socks5Handler
+                             HttpHandler                  ↓
+                                   ↓                 DomainMatcher
+                            DomainMatcher                  ↓
+                                   ↓                 Match domain?
+                            Match domain?            ↙          ↘
+                            ↙          ↘        Yes: PROXY    No: DIRECT
+                      Yes: PROXY    No: DIRECT      ↓              ↓
+                          ↓              ↓     Upstream Proxy  Target Host
+                  Upstream Proxy    Target Host     ↓
+                          ↓              ↓     Target Host
+                    Target Host          
 ```
-
-**HTTPS:** Прозрачное CONNECT туннелирование, SSL/TLS не дешифруется  
-**Fallback:** При ошибке upstream автоматически переключается на прямое соединение
 
 ## Troubleshooting
 
