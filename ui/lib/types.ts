@@ -44,5 +44,7 @@ export interface Config {
 export interface AppInfo {
   version: string;
   configPath: string;
-  loadWarning: string | null;
+  warnings: string[];
+  /** Why the proxy did not start at launch; null once it runs. */
+  startError: string | null;
 }

@@ -27,7 +27,9 @@ fn main() {
             tray::show_main_window(app);
         }))
         .setup(move |app| {
-            app.manage(state::AppState::load()?);
+            let state = state::AppState::load()?;
+            start_proxy_if_enabled(&state);
+            app.manage(state);
             tray::create(app.handle())?;
             if !start_minimized {
                 tray::show_main_window(app.handle());
@@ -49,4 +51,22 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running LocalProxy");
+}
+
+/// Restores routing after a restart. If the proxy cannot start, routing is
+/// switched off in the saved config and the reason is shown in the window.
+fn start_proxy_if_enabled(state: &state::AppState) {
+    let mut config = state.config().clone();
+    if !config.enabled {
+        return;
+    }
+    let Some(error) = tauri::async_runtime::block_on(commands::sync_proxy(state, &mut config))
+    else {
+        return;
+    };
+    if let Err(e) = config.save(&state.config_path) {
+        tracing::error!("cannot save config: {e}");
+    }
+    *state.config() = config;
+    state.set_start_error(Some(error));
 }

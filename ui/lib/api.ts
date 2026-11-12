@@ -10,3 +10,7 @@ export const setEnabled = (enabled: boolean) => invoke<Config>("set_enabled", { 
 /** Fires on every config change, including ones made from the tray. */
 export const onConfigChanged = (handler: (config: Config) => void): Promise<UnlistenFn> =>
   listen<Config>("config-changed", (event) => handler(event.payload));
+
+/** Errors from actions started outside the window, e.g. the tray toggle. */
+export const onAppError = (handler: (message: string) => void): Promise<UnlistenFn> =>
+  listen<string>("app-error", (event) => handler(event.payload));

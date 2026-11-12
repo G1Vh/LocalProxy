@@ -38,13 +38,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_OPEN => show_main_window(app),
-            MENU_TOGGLE => {
-                let state = app.state::<AppState>();
-                let enabled = !state.config().enabled;
-                if let Err(e) = commands::set_enabled_inner(app, &state, enabled) {
-                    tracing::error!("cannot toggle from tray: {e}");
-                }
-            }
+            MENU_TOGGLE => commands::toggle_in_background(app),
             MENU_QUIT => app.exit(0),
             _ => {}
         })

@@ -2,33 +2,55 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::Context;
-use proxy_core::Config;
+use proxy_core::{Config, ProxyServer};
 
 pub struct AppState {
     pub config_path: PathBuf,
     config: Mutex<Config>,
-    /// Set when the config file was broken and had to be replaced with defaults.
-    pub load_warning: Option<String>,
+    /// The running proxy; `None` while routing is off.
+    pub proxy: tokio::sync::Mutex<Option<ProxyServer>>,
+    /// Lasting problems found at startup (e.g. a broken config file).
+    pub warnings: Vec<String>,
+    /// Why the proxy could not start; cleared once it starts.
+    start_error: Mutex<Option<String>>,
 }
 
 impl AppState {
     pub fn load() -> anyhow::Result<Self> {
         let path = config_dir()?.join("config.json");
         let (config, err) = Config::load_or_recover(&path);
-        if let Some(err) = &err {
+        let mut warnings = Vec::new();
+        if let Some(err) = err {
             tracing::warn!("config was unreadable, starting with defaults: {err}");
+            warnings.push(format!(
+                "Файл настроек был повреждён и переименован в config.json.broken, \
+                 загружены настройки по умолчанию. {err}"
+            ));
         }
         tracing::info!(path = %path.display(), "config loaded");
         Ok(Self {
             config_path: path,
             config: Mutex::new(config),
-            load_warning: err.map(|e| e.to_string()),
+            proxy: tokio::sync::Mutex::new(None),
+            warnings,
+            start_error: Mutex::new(None),
         })
     }
 
     pub fn config(&self) -> MutexGuard<'_, Config> {
         // A panic while holding the lock must not brick the app.
         self.config.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn start_error(&self) -> Option<String> {
+        self.start_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    pub fn set_start_error(&self, error: Option<String>) {
+        *self.start_error.lock().unwrap_or_else(|e| e.into_inner()) = error;
     }
 }
 

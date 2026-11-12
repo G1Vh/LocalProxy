@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getAppInfo, getConfig, onConfigChanged, setEnabled } from "./lib/api";
+  import { getAppInfo, getConfig, onAppError, onConfigChanged, setEnabled } from "./lib/api";
   import type { AppInfo, Config } from "./lib/types";
 
   let config = $state<Config | null>(null);
@@ -9,15 +9,23 @@
   let busy = $state(false);
 
   onMount(() => {
-    const unlisten = onConfigChanged((c) => (config = c));
+    const unlisteners = [
+      onConfigChanged((c) => {
+        config = c;
+        // A start error is stale once routing is on (e.g. switched on from the tray).
+        if (c.enabled) error = null;
+      }),
+      onAppError((message) => (error = message)),
+    ];
     Promise.all([getConfig(), getAppInfo()])
       .then(([c, i]) => {
         config = c;
         info = i;
+        if (!c.enabled && i.startError) error = i.startError;
       })
       .catch((e) => (error = String(e)));
     return () => {
-      unlisten.then((off) => off());
+      for (const unlisten of unlisteners) unlisten.then((off) => off());
     };
   });
 
@@ -59,12 +67,9 @@
     {/if}
   </header>
 
-  {#if info?.loadWarning}
-    <div class="banner warning">
-      Файл настроек был повреждён, он переименован в <code>config.json.broken</code>, загружены
-      настройки по умолчанию. {info.loadWarning}
-    </div>
-  {/if}
+  {#each info?.warnings ?? [] as warning}
+    <div class="banner warning">{warning}</div>
+  {/each}
   {#if error}
     <div class="banner error">{error}</div>
   {/if}
