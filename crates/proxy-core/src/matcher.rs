@@ -39,16 +39,17 @@ pub enum PatternError {
 }
 
 #[derive(Debug, Clone)]
-struct Compiled {
-    id: Uuid,
-    match_type: MatchType,
+pub(crate) struct Compiled {
+    pub id: Uuid,
+    pub match_type: MatchType,
     /// Normalized pattern: a domain for exact / subdomains, a glob for masks.
-    pattern: String,
-    action: RuleAction,
-    literal_len: usize,
+    pub pattern: String,
+    pub action: RuleAction,
+    pub literal_len: usize,
 }
 
-/// Rules compiled for matching. Cheap to clone the `Arc` that holds it.
+/// Rules compiled for matching, sorted by precedence (strongest first),
+/// so the first rule that matches decides. The PAC file relies on this order too.
 #[derive(Debug, Clone, Default)]
 pub struct RuleSet {
     rules: Vec<Compiled>,
@@ -57,7 +58,7 @@ pub struct RuleSet {
 impl RuleSet {
     /// Compiles the enabled rules; rules with invalid patterns are skipped and logged.
     pub fn new(rules: &[Rule]) -> Self {
-        let rules = rules
+        let mut rules: Vec<Compiled> = rules
             .iter()
             .filter(|r| r.enabled)
             .filter_map(|r| match normalize_pattern(&r.pattern, r.match_type) {
@@ -74,6 +75,7 @@ impl RuleSet {
                 }
             })
             .collect();
+        rules.sort_by(|a, b| precedence(b, a));
         Self { rules }
     }
 
@@ -85,12 +87,16 @@ impl RuleSet {
         self.rules.is_empty()
     }
 
+    /// Rules in precedence order, strongest first.
+    pub(crate) fn entries(&self) -> &[Compiled] {
+        &self.rules
+    }
+
     pub fn decide(&self, host: &str) -> Decision {
         let host = normalize_host(host);
         self.rules
             .iter()
-            .filter(|r| matches(r, &host))
-            .max_by(|a, b| precedence(a, b))
+            .find(|r| matches(r, &host))
             .map_or(Decision::UNMATCHED, |r| Decision {
                 action: r.action,
                 rule_id: Some(r.id),

@@ -611,3 +611,49 @@ async fn busy_port_is_reported() {
         Ok(_) => panic!("second server must not bind a busy port"),
     }
 }
+
+#[tokio::test]
+async fn serves_pac_and_version_follows_rules() {
+    let mut cfg = config(None, OnOutboundDown::Block);
+    let proxy = start(&cfg).await;
+    let url_before = proxy.pac_url();
+    assert!(url_before.starts_with(&format!("http://127.0.0.1:{}/proxy.pac?v=", proxy.port())));
+
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(T)
+        .build()
+        .unwrap();
+    let resp = client.get(&url_before).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()["content-type"],
+        "application/x-ns-proxy-autoconfig"
+    );
+    let pac = resp.text().await.unwrap();
+    assert!(pac.contains("\"localhost\""), "{pac}");
+    assert!(
+        pac.contains(&format!("PROXY 127.0.0.1:{}", proxy.port())),
+        "{pac}"
+    );
+
+    cfg.rules.push(rule("example.com", RuleAction::Proxy));
+    proxy.update(&cfg);
+    assert_ne!(proxy.pac_url(), url_before);
+    let pac = client
+        .get(proxy.pac_url())
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(pac.contains("\"example.com\""), "{pac}");
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/other", proxy.port()))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}

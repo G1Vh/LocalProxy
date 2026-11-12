@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::config::{Config, OnOutboundDown, RuleAction};
 use crate::matcher::RuleSet;
 use crate::outbound::{ConnectError, Upstream, basic_auth, connect_direct, connect_server};
+use crate::pac;
 use crate::stream::{BoxIo, TargetAddr};
 
 const EVENT_BUFFER: usize = 1024;
@@ -22,12 +23,21 @@ pub struct Snapshot {
     pub upstream: Option<Upstream>,
     pub on_down: OnOutboundDown,
     pub socks5_enabled: bool,
+    /// PAC script for the current rules.
+    pub pac: String,
+    /// Content hash of `pac`, for cache busting.
+    pub pac_version: String,
 }
 
 impl Snapshot {
-    pub fn from_config(config: &Config) -> Self {
+    /// `port` is the port actually listened on (the config may say 0 in tests).
+    pub fn from_config(config: &Config, port: u16) -> Self {
+        let rules = RuleSet::new(&config.rules);
+        let pac = pac::generate(&rules, port, config.on_outbound_down);
         Self {
-            rules: RuleSet::new(&config.rules),
+            pac_version: pac::version(&pac),
+            pac,
+            rules,
             upstream: config
                 .active_outbound()
                 .map(|o| Upstream::from_kind(&o.kind)),
@@ -106,20 +116,22 @@ pub enum HttpHop {
 }
 
 pub struct Router {
+    port: u16,
     snapshot: RwLock<Arc<Snapshot>>,
     events: broadcast::Sender<ConnEvent>,
 }
 
 impl Router {
-    pub fn new(config: &Config) -> Self {
+    pub fn new(config: &Config, port: u16) -> Self {
         Self {
-            snapshot: RwLock::new(Arc::new(Snapshot::from_config(config))),
+            port,
+            snapshot: RwLock::new(Arc::new(Snapshot::from_config(config, port))),
             events: broadcast::channel(EVENT_BUFFER).0,
         }
     }
 
     pub fn update(&self, config: &Config) {
-        let snapshot = Arc::new(Snapshot::from_config(config));
+        let snapshot = Arc::new(Snapshot::from_config(config, self.port));
         *self.snapshot.write().unwrap_or_else(|e| e.into_inner()) = snapshot;
     }
 

@@ -87,7 +87,7 @@ impl ProxyServer {
             }
         };
 
-        let router = Arc::new(Router::new(config));
+        let router = Arc::new(Router::new(config, port));
         let cancel = CancellationToken::new();
         let tracker = TaskTracker::new();
         let ctx = ConnCtx {
@@ -122,6 +122,17 @@ impl ProxyServer {
 
     pub fn subscribe(&self) -> broadcast::Receiver<ConnEvent> {
         self.router.subscribe()
+    }
+
+    /// URL of the PAC for the current rules. The `v` parameter changes with the
+    /// content, so Windows fetches a fresh copy after every rule change.
+    pub fn pac_url(&self) -> String {
+        format!(
+            "http://127.0.0.1:{}{}?v={}",
+            self.port,
+            crate::pac::PAC_PATH,
+            self.router.snapshot().pac_version
+        )
     }
 
     /// Stops listening and closes every open connection.

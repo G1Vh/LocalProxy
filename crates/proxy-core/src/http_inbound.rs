@@ -13,6 +13,7 @@ use hyper_util::rt::TokioIo;
 use tokio::io::copy_bidirectional;
 use tokio::net::TcpStream;
 
+use crate::pac;
 use crate::router::{HttpHop, Inbound, RouteError};
 use crate::server::ConnCtx;
 use crate::stream::TargetAddr;
@@ -39,13 +40,26 @@ async fn handle(req: Request<Incoming>, ctx: ConnCtx) -> Result<Response<Body>, 
     } else if req.uri().scheme().is_some() && req.uri().authority().is_some() {
         forward(req, ctx).await
     } else {
-        local(&req)
+        local(&req, &ctx)
     };
     Ok(response)
 }
 
-/// Requests addressed to the proxy itself (origin-form). The PAC file lands here later.
-fn local(_req: &Request<Incoming>) -> Response<Body> {
+/// Requests addressed to the proxy itself (origin-form): the PAC file.
+fn local(req: &Request<Incoming>, ctx: &ConnCtx) -> Response<Body> {
+    let is_read = req.method() == Method::GET || req.method() == Method::HEAD;
+    if is_read && req.uri().path() == pac::PAC_PATH {
+        let pac = ctx.router.snapshot().pac.clone();
+        let mut response =
+            Response::new(Full::new(Bytes::from(pac)).map_err(|n| match n {}).boxed());
+        let headers = response.headers_mut();
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static(pac::PAC_CONTENT_TYPE),
+        );
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        return response;
+    }
     text(
         StatusCode::NOT_FOUND,
         "LocalProxy: это прокси-сервер, а не веб-сайт",

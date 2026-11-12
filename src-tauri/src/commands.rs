@@ -2,7 +2,10 @@ use proxy_core::{Config, ProxyServer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use tauri_plugin_autostart::ManagerExt;
+
 use crate::state::AppState;
+use crate::system::Desired;
 use crate::tray;
 
 /// Event the UI listens to; payload is the new [`Config`].
@@ -85,7 +88,7 @@ pub async fn apply_config(
     state: &AppState,
     mut config: Config,
 ) -> Result<Config, String> {
-    let start_error = sync_proxy(state, &mut config).await;
+    let start_error = sync_runtime(state, &mut config).await;
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config() = config.clone();
     tray::refresh(app, &config);
@@ -98,35 +101,83 @@ pub async fn apply_config(
     }
 }
 
-/// Starts, updates, restarts or stops the proxy to match `config`.
-/// On a start failure switches `config.enabled` off and returns the message.
-pub async fn sync_proxy(state: &AppState, config: &mut Config) -> Option<String> {
+/// Brings the proxy and the Windows settings in line with `config`.
+///
+/// Order matters: on enable the proxy starts before Windows is pointed at it;
+/// on disable Windows is restored before the proxy stops, so the system never
+/// points at a port nobody listens on. If anything fails, routing is switched
+/// off (`config.enabled = false`) and the message is returned.
+pub async fn sync_runtime(state: &AppState, config: &mut Config) -> Option<String> {
     let mut slot = state.proxy.lock().await;
+
     if !config.enabled {
+        let error = apply_system(state, Desired::default()).await.err();
         if let Some(server) = slot.take() {
             server.stop().await;
         }
-        return None;
+        return error;
     }
-    if let Some(server) = slot.as_ref()
-        && server.port() == config.port
-    {
-        server.update(config);
-        return None;
-    }
-    if let Some(server) = slot.take() {
-        server.stop().await;
-    }
-    match ProxyServer::start(config).await {
-        Ok(server) => {
-            *slot = Some(server);
-            state.set_start_error(None);
-            None
+
+    let restart = slot.as_ref().is_none_or(|s| s.port() != config.port);
+    if restart {
+        if let Some(server) = slot.take() {
+            server.stop().await;
         }
-        Err(e) => {
-            tracing::error!("proxy did not start: {e}");
-            config.enabled = false;
-            Some(format!("Прокси не запущен: {e}"))
+        match ProxyServer::start(config).await {
+            Ok(server) => *slot = Some(server),
+            Err(e) => {
+                tracing::error!("proxy did not start: {e}");
+                config.enabled = false;
+                let _ = apply_system(state, Desired::default()).await;
+                return Some(format!("Прокси не запущен: {e}"));
+            }
         }
     }
+    let server = slot.as_ref().expect("started above");
+    server.update(config);
+
+    let desired = Desired {
+        pac_url: Some(server.pac_url()),
+        env_port: config.set_env_vars.then_some(server.port()),
+    };
+    if let Err(e) = apply_system(state, desired).await {
+        config.enabled = false;
+        let _ = apply_system(state, Desired::default()).await;
+        if let Some(server) = slot.take() {
+            server.stop().await;
+        }
+        return Some(e);
+    }
+    state.set_start_error(None);
+    None
+}
+
+async fn apply_system(state: &AppState, desired: Desired) -> Result<(), String> {
+    let system = state.system.clone();
+    tauri::async_runtime::spawn_blocking(move || system.apply(&desired))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            tracing::error!("system proxy: {e:#}");
+            format!("Не удалось изменить настройки прокси Windows: {e:#}")
+        })
+}
+
+#[tauri::command]
+pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let launcher = app.autolaunch();
+    let result = if enabled {
+        launcher.enable()
+    } else {
+        launcher
+            .disable()
+            .inspect(|_| crate::system::remove_startup_approved(&app.package_info().name))
+    };
+    result.map_err(|e| format!("Не удалось изменить автозагрузку: {e}"))?;
+    launcher.is_enabled().map_err(|e| e.to_string())
 }
