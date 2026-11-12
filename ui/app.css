@@ -1,0 +1,76 @@
+:root {
+  --bg: #f5f5f4;
+  --surface: #ffffff;
+  --surface-alt: #f0efec;
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --text: #1f1e1c;
+  --text-secondary: #6b6a66;
+  --accent: #2f6fd0;
+  --success-bg: #e6f3dc;
+  --success-text: #2f5f10;
+  --danger-text: #a32d2d;
+  --warning-bg: #faeeda;
+  --warning-text: #7a4a08;
+  --toggle-off: #b4b2a9;
+  --radius: 8px;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1b;
+    --surface: #262624;
+    --surface-alt: #2f2f2c;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-strong: rgba(255, 255, 255, 0.2);
+    --text: #ecebe6;
+    --text-secondary: #a3a19a;
+    --accent: #6ea4f0;
+    --success-bg: #27400f;
+    --success-text: #c0dd97;
+    --danger-text: #f09595;
+    --warning-bg: #4a3206;
+    --warning-text: #fac775;
+    --toggle-off: #5f5e5a;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+select {
+  -webkit-user-select: text;
+  user-select: text;
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}

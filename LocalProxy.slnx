@@ -1,4 +1,0 @@
-<Solution>
-  <Project Path="LocalProxy.Tests/LocalProxy.Tests.csproj" />
-  <Project Path="LocalProxy/LocalProxy.csproj" />
-</Solution>
