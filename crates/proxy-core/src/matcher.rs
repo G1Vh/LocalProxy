@@ -8,6 +8,7 @@
 //! A host no rule matches goes direct.
 
 use std::cmp::Ordering;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use uuid::Uuid;
 
@@ -36,16 +37,21 @@ pub enum PatternError {
     WildcardNeedsMask,
     #[error("недопустимые символы в шаблоне")]
     InvalidCharacters,
+    #[error("подсеть пишется как 149.154.160.0/20 или 2001:db8::/32")]
+    InvalidCidr,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Compiled {
     pub id: Uuid,
     pub match_type: MatchType,
-    /// Normalized pattern: a domain for exact / subdomains, a glob for masks.
+    /// Normalized pattern: a domain for exact / subdomains, a glob for masks,
+    /// `network/prefix` for subnets.
     pub pattern: String,
     pub action: RuleAction,
     pub literal_len: usize,
+    /// Parsed network for [`MatchType::Cidr`].
+    pub net: Option<(IpAddr, u8)>,
 }
 
 /// Rules compiled for matching, sorted by precedence (strongest first),
@@ -62,13 +68,24 @@ impl RuleSet {
             .iter()
             .filter(|r| r.enabled)
             .filter_map(|r| match normalize_pattern(&r.pattern, r.match_type) {
-                Ok(pattern) => Some(Compiled {
-                    id: r.id,
-                    match_type: r.match_type,
-                    literal_len: pattern.chars().filter(|c| !matches!(c, '*' | '?')).count(),
-                    pattern,
-                    action: r.action,
-                }),
+                Ok(pattern) => {
+                    let net = (r.match_type == MatchType::Cidr)
+                        .then(|| parse_cidr(&pattern).ok())
+                        .flatten();
+                    // For subnets a longer prefix is the more specific rule.
+                    let literal_len = match net {
+                        Some((_, prefix)) => usize::from(prefix),
+                        None => pattern.chars().filter(|c| !matches!(c, '*' | '?')).count(),
+                    };
+                    Some(Compiled {
+                        id: r.id,
+                        match_type: r.match_type,
+                        literal_len,
+                        pattern,
+                        action: r.action,
+                        net,
+                    })
+                }
                 Err(e) => {
                     tracing::warn!(pattern = %r.pattern, "rule skipped: {e}");
                     None
@@ -109,7 +126,7 @@ fn precedence(a: &Compiled, b: &Compiled) -> Ordering {
         match t {
             MatchType::Exact => 2,
             MatchType::DomainAndSubdomains => 1,
-            MatchType::Mask => 0,
+            MatchType::Mask | MatchType::Cidr => 0,
         }
     }
     fn action_rank(a: RuleAction) -> u8 {
@@ -135,7 +152,47 @@ fn matches(rule: &Compiled, host: &str) -> bool {
                     && host.as_bytes()[host.len() - p.len() - 1] == b'.')
         }
         MatchType::Mask => glob(p.as_bytes(), host.as_bytes()),
+        MatchType::Cidr => match (host.parse::<IpAddr>(), rule.net) {
+            (Ok(addr), Some((net, prefix))) => in_network(addr, net, prefix),
+            _ => false,
+        },
     }
+}
+
+fn in_network(addr: IpAddr, net: IpAddr, prefix: u8) -> bool {
+    match (addr, net) {
+        (IpAddr::V4(a), IpAddr::V4(n)) => {
+            let mask = u32::MAX.checked_shl(32 - u32::from(prefix)).unwrap_or(0);
+            u32::from(a) & mask == u32::from(n) & mask
+        }
+        (IpAddr::V6(a), IpAddr::V6(n)) => {
+            let mask = u128::MAX.checked_shl(128 - u32::from(prefix)).unwrap_or(0);
+            u128::from(a) & mask == u128::from(n) & mask
+        }
+        _ => false,
+    }
+}
+
+/// Parses `address/prefix` and returns the network address with host bits cleared.
+pub fn parse_cidr(input: &str) -> Result<(IpAddr, u8), PatternError> {
+    let (addr, prefix) = input
+        .trim()
+        .split_once('/')
+        .ok_or(PatternError::InvalidCidr)?;
+    let addr: IpAddr = addr.parse().map_err(|_| PatternError::InvalidCidr)?;
+    let prefix: u8 = prefix.parse().map_err(|_| PatternError::InvalidCidr)?;
+    let network = match addr {
+        IpAddr::V4(a) if prefix <= 32 => {
+            let mask = u32::MAX.checked_shl(32 - u32::from(prefix)).unwrap_or(0);
+            IpAddr::V4(Ipv4Addr::from(u32::from(a) & mask))
+        }
+        IpAddr::V6(a) if prefix <= 128 => {
+            let mask = u128::MAX.checked_shl(128 - u32::from(prefix)).unwrap_or(0);
+            IpAddr::V6(Ipv6Addr::from(u128::from(a) & mask))
+        }
+        _ => return Err(PatternError::InvalidCidr),
+    };
+    Ok((network, prefix))
 }
 
 /// `*` matches any run of characters (including none and dots), `?` exactly one.
@@ -177,6 +234,10 @@ pub fn normalize_host(host: &str) -> String {
 /// `example.com`; `*.example.com` and `.example.com` are accepted for
 /// domain-and-subdomains and mean the same as `example.com`.
 pub fn normalize_pattern(input: &str, match_type: MatchType) -> Result<String, PatternError> {
+    if match_type == MatchType::Cidr {
+        let (network, prefix) = parse_cidr(input)?;
+        return Ok(format!("{network}/{prefix}"));
+    }
     let mut s = input.trim().to_lowercase();
     // `?` starts a query only in a pasted URL; elsewhere it is a mask wildcard.
     let is_url = s.contains("://");
@@ -253,7 +314,6 @@ mod tests {
             match_type,
             action,
             comment: String::new(),
-            preset: None,
         }
     }
 
@@ -398,6 +458,41 @@ mod tests {
             n("exa mple.com", Exact),
             Err(PatternError::InvalidCharacters)
         );
+    }
+
+    #[test]
+    fn cidr_rules() {
+        use MatchType::Cidr;
+        let set = RuleSet::new(&[
+            proxy("149.154.160.0/20", Cidr),
+            proxy("2001:b28:f23d::/48", Cidr),
+            direct("149.154.167.0/24", Cidr),
+            proxy("10.0.0.0/8", Cidr),
+        ]);
+        assert_eq!(action(&set, "149.154.160.1"), RuleAction::Proxy);
+        assert_eq!(action(&set, "149.154.175.255"), RuleAction::Proxy);
+        assert_eq!(action(&set, "149.154.176.0"), RuleAction::Direct);
+        assert_eq!(
+            action(&set, "149.154.167.51"),
+            RuleAction::Direct,
+            "/24 beats /20"
+        );
+        assert_eq!(action(&set, "2001:b28:f23d:f001::a"), RuleAction::Proxy);
+        assert_eq!(action(&set, "[2001:b28:f23d::1]"), RuleAction::Proxy);
+        assert_eq!(action(&set, "2001:b28:f23e::1"), RuleAction::Direct);
+        assert_eq!(
+            action(&set, "telegram.org"),
+            RuleAction::Direct,
+            "names never hit subnets"
+        );
+
+        let n = |s| normalize_pattern(s, Cidr);
+        assert_eq!(n(" 149.154.167.51/20 ").unwrap(), "149.154.160.0/20");
+        assert_eq!(n("2001:b28:f23d:1::/48").unwrap(), "2001:b28:f23d::/48");
+        assert_eq!(n("0.0.0.0/0").unwrap(), "0.0.0.0/0");
+        assert_eq!(n("1.2.3.4/33"), Err(PatternError::InvalidCidr));
+        assert_eq!(n("1.2.3.4"), Err(PatternError::InvalidCidr));
+        assert_eq!(n("example.com/8"), Err(PatternError::InvalidCidr));
     }
 
     #[test]

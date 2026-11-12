@@ -1,0 +1,120 @@
+{
+  "revision": 1,
+  "presets": [
+    {
+      "id": "openai",
+      "name": "OpenAI / ChatGPT",
+      "domains": [
+        "openai.com",
+        "chatgpt.com",
+        "oaistatic.com",
+        "oaiusercontent.com"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic / Claude",
+      "domains": [
+        "anthropic.com",
+        "claude.ai",
+        "claude.com"
+      ]
+    },
+    {
+      "id": "github",
+      "name": "GitHub / Copilot",
+      "domains": [
+        "github.com",
+        "githubusercontent.com",
+        "githubassets.com",
+        "githubcopilot.com"
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Google Gemini / AI Studio",
+      "domains": [
+        "gemini.google.com",
+        "aistudio.google.com",
+        "generativelanguage.googleapis.com"
+      ]
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "note": "Сайт, видео (googlevideo.com), превью и аватарки (ytimg.com, ggpht.com, yt3.googleusercontent.com), короткие ссылки youtu.be, встроенный плеер и API приложений. Общие домены Google (gstatic.com, googleusercontent.com, play.google.com) не включены — иначе через outbound пойдёт и поиск, и почта.",
+      "domains": [
+        "youtube.com",
+        "youtu.be",
+        "yt.be",
+        "youtube.ru",
+        "youtube-nocookie.com",
+        "youtubekids.com",
+        "withyoutube.com",
+        "ytimg.com",
+        "ggpht.com",
+        "googlevideo.com",
+        "yt3.googleusercontent.com",
+        "youtubei.googleapis.com",
+        "youtube.googleapis.com",
+        "youtubeembeddedplayer.googleapis.com",
+        "wide-youtube.l.google.com",
+        "youtube-ui.l.google.com"
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "note": "Веб-версия, ссылки t.me, Telegraph, CDN и подсети серверов Telegram (core.telegram.org/resources/cidr.txt). Приложение Telegram Desktop системный прокси не использует — укажите в нём SOCKS5 127.0.0.1:3128 (Настройки → Продвинутые → Тип соединения), подсети из набора отправят его трафик через outbound.",
+      "domains": [
+        "telegram.org",
+        "t.me",
+        "telegram.me",
+        "tx.me",
+        "telegra.ph",
+        "graph.org",
+        "cdn-telegram.org",
+        "telegram-cdn.org",
+        "91.108.4.0/22",
+        "91.108.8.0/22",
+        "91.108.12.0/22",
+        "91.108.16.0/22",
+        "91.108.20.0/22",
+        "91.108.56.0/22",
+        "91.105.192.0/23",
+        "149.154.160.0/20",
+        "185.76.151.0/24",
+        "2001:b28:f23c::/48",
+        "2001:b28:f23d::/48",
+        "2001:b28:f23f::/48",
+        "2001:67c:4e8::/48",
+        "2a0a:f280::/32"
+      ]
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "note": "Сайт, приложение, CDN, вложения, приглашения discord.gg. Голосовые каналы работают по UDP и через HTTP-прокси не проходят.",
+      "domains": [
+        "discord.com",
+        "discord.gg",
+        "discordapp.com",
+        "discordapp.net",
+        "discord.media",
+        "discordcdn.com",
+        "dis.gd",
+        "discord.co",
+        "discord.dev",
+        "discord.gift",
+        "discord.gifts",
+        "discord.new",
+        "discord.store",
+        "discordstatus.com",
+        "discord-activities.com",
+        "discordactivities.com",
+        "discordsays.com",
+        "discord-attachments-uploads-prd.storage.googleapis.com"
+      ]
+    }
+  ]
+}

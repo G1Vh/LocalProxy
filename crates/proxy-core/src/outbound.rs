@@ -85,6 +85,19 @@ impl Upstream {
         }
     }
 
+    /// True if this upstream is a loopback address on `port`, i.e. our own listener.
+    pub fn points_to(&self, port: u16) -> bool {
+        let (Self::Http(ep) | Self::Socks5(ep)) = self else {
+            return false;
+        };
+        let host = ep.host.trim().trim_start_matches('[').trim_end_matches(']');
+        ep.port == port
+            && (host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified()))
+    }
+
     /// A raw TCP tunnel to `target` through this upstream.
     pub async fn connect(&self, target: &TargetAddr) -> Result<BoxIo, ConnectError> {
         match self {

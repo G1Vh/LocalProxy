@@ -88,7 +88,7 @@ pub async fn apply_config(
     state: &AppState,
     mut config: Config,
 ) -> Result<Config, String> {
-    let start_error = sync_runtime(state, &mut config).await;
+    let start_error = sync_runtime(app, state, &mut config).await;
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config() = config.clone();
     tray::refresh(app, &config);
@@ -107,7 +107,11 @@ pub async fn apply_config(
 /// on disable Windows is restored before the proxy stops, so the system never
 /// points at a port nobody listens on. If anything fails, routing is switched
 /// off (`config.enabled = false`) and the message is returned.
-pub async fn sync_runtime(state: &AppState, config: &mut Config) -> Option<String> {
+pub async fn sync_runtime(
+    app: &AppHandle,
+    state: &AppState,
+    config: &mut Config,
+) -> Option<String> {
     let mut slot = state.proxy.lock().await;
 
     if !config.enabled {
@@ -118,13 +122,18 @@ pub async fn sync_runtime(state: &AppState, config: &mut Config) -> Option<Strin
         return error;
     }
 
+    // The proxy runs on the user's rules plus the entries of selected presets.
+    let effective = crate::presets::effective(config, &state.presets().file);
     let restart = slot.as_ref().is_none_or(|s| s.port() != config.port);
     if restart {
         if let Some(server) = slot.take() {
             server.stop().await;
         }
-        match ProxyServer::start(config).await {
-            Ok(server) => *slot = Some(server),
+        match ProxyServer::start(&effective).await {
+            Ok(server) => {
+                crate::events::forward(app.clone(), server.subscribe());
+                *slot = Some(server);
+            }
             Err(e) => {
                 tracing::error!("proxy did not start: {e}");
                 config.enabled = false;
@@ -134,7 +143,7 @@ pub async fn sync_runtime(state: &AppState, config: &mut Config) -> Option<Strin
         }
     }
     let server = slot.as_ref().expect("started above");
-    server.update(config);
+    server.update(&effective);
 
     let desired = Desired {
         pac_url: Some(server.pac_url()),

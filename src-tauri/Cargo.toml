@@ -19,6 +19,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+# Windows' own TLS (SChannel): no extra C toolchain needed for the build.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls"] }
+uuid.workspace = true
 tauri-plugin-single-instance = "2"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
@@ -26,3 +30,6 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_Registry",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+tempfile = "3"

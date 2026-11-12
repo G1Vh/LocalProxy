@@ -16,6 +16,11 @@ use crate::stream::{BoxIo, TargetAddr};
 
 const EVENT_BUFFER: usize = 1024;
 
+/// An outbound that is LocalProxy itself would send matched traffic round
+/// in circles, each lap opening another connection.
+pub const SELF_LOOP: &str =
+    "outbound указывает на сам LocalProxy — получилась бы петля, укажите другой сервер";
+
 /// Everything routing needs, rebuilt on each config change and swapped atomically.
 #[derive(Debug)]
 pub struct Snapshot {
@@ -176,6 +181,9 @@ impl Router {
             RuleAction::Proxy => {
                 let attempt = match &snap.upstream {
                     None => Err(ConnectError::OutboundDown("outbound не выбран".into())),
+                    Some(upstream) if upstream.points_to(self.port) => {
+                        Err(ConnectError::OutboundDown(SELF_LOOP.into()))
+                    }
                     Some(Upstream::Http(ep)) if plain_http => {
                         connect_server(ep).await.map(|s| -> (BoxIo, HttpHop) {
                             (

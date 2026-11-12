@@ -1,94 +1,33 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import {
-    getAppInfo,
-    getAutostart,
-    getConfig,
-    onAppError,
-    onConfigChanged,
-    saveConfig,
-    setAutostart,
-    setEnabled,
-  } from "./lib/api";
-  import type { AppInfo, Config } from "./lib/types";
+  import * as api from "./lib/api";
+  import { store } from "./lib/store.svelte";
+  import RulesTab from "./components/RulesTab.svelte";
+  import ConnectionsTab from "./components/ConnectionsTab.svelte";
+  import OutboundsTab from "./components/OutboundsTab.svelte";
+  import SettingsTab from "./components/SettingsTab.svelte";
 
-  let config = $state<Config | null>(null);
-  let info = $state<AppInfo | null>(null);
-  let error = $state<string | null>(null);
-  let busy = $state(false);
-  let autostart = $state(false);
-  let portInput = $state("");
+  type Tab = "rules" | "connections" | "outbounds" | "settings";
+  let tab = $state<Tab>("rules");
 
   onMount(() => {
-    const unlisteners = [
-      onConfigChanged((c) => {
-        config = c;
-        portInput = String(c.port);
-        // A start error is stale once routing is on (e.g. switched on from the tray).
-        if (c.enabled) error = null;
-      }),
-      onAppError((message) => (error = message)),
-    ];
-    Promise.all([getConfig(), getAppInfo(), getAutostart()])
-      .then(([c, i, a]) => {
-        config = c;
-        info = i;
-        autostart = a;
-        portInput = String(c.port);
-        if (!c.enabled && i.startError) error = i.startError;
-      })
-      .catch((e) => (error = String(e)));
-    return () => {
-      for (const unlisten of unlisteners) unlisten.then((off) => off());
-    };
+    let cleanup: (() => void) | undefined;
+    store.init().then((off) => (cleanup = off));
+    return () => cleanup?.();
   });
 
+  const config = $derived(store.config);
+  const active = $derived(config?.outbounds.find((o) => o.id === config.activeOutboundId));
+  const presetCount = $derived(config?.presets.length ?? 0);
+
   async function toggle() {
-    if (!config || busy) return;
-    busy = true;
-    error = null;
-    try {
-      config = await setEnabled(!config.enabled);
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
+    if (!config) return;
+    const saved = await store.run(() => api.setEnabled(!config.enabled));
+    if (saved) store.config = saved;
   }
 
-  /** Saves a changed copy of the config; the backend applies it right away. */
-  async function update(change: (c: Config) => void) {
-    if (!config || busy) return;
-    const next: Config = structuredClone($state.snapshot(config));
-    change(next);
-    busy = true;
-    error = null;
-    try {
-      config = await saveConfig(next);
-    } catch (e) {
-      error = String(e);
-    } finally {
-      busy = false;
-    }
-  }
-
-  function applyPort() {
-    const port = Number(portInput);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      error = "Порт — число от 1 до 65535";
-      portInput = String(config?.port ?? "");
-      return;
-    }
-    if (port !== config?.port) update((c) => (c.port = port));
-  }
-
-  async function toggleAutostart() {
-    error = null;
-    try {
-      autostart = await setAutostart(!autostart);
-    } catch (e) {
-      error = String(e);
-    }
+  function selectOutbound(id: string) {
+    store.update((c) => (c.activeOutboundId = id || null));
   }
 </script>
 
@@ -96,18 +35,29 @@
   <header>
     <span class="title">LocalProxy</span>
     {#if config}
-      <span class="pill" class:on={config.enabled}>
+      <span class="pill" class:ok={config.enabled}>
         {config.enabled ? `Включён · 127.0.0.1:${config.port}` : "Выключен"}
       </span>
-    {/if}
-    <span class="spacer"></span>
-    {#if config}
+      <span class="spacer"></span>
+      <label class="outbound-pick">
+        <span class="hint">Outbound</span>
+        <select
+          value={config.activeOutboundId ?? ""}
+          onchange={(e) => selectOutbound(e.currentTarget.value)}
+          disabled={store.busy}
+        >
+          <option value="">— не выбран —</option>
+          {#each config.outbounds as o (o.id)}
+            <option value={o.id}>{o.name}</option>
+          {/each}
+        </select>
+      </label>
       <span class="hint">{config.enabled ? "Вкл" : "Выкл"}</span>
       <button
         class="toggle"
         class:off={!config.enabled}
         onclick={toggle}
-        disabled={busy}
+        disabled={store.busy}
         aria-label="Включить или выключить проксирование"
         aria-pressed={config.enabled}
       >
@@ -116,79 +66,70 @@
     {/if}
   </header>
 
-  {#each info?.warnings ?? [] as warning}
+  {#each store.info?.warnings ?? [] as warning}
     <div class="banner warning">{warning}</div>
   {/each}
-  {#if error}
-    <div class="banner error">{error}</div>
+  {#if store.browserWarnings.length}
+    <div class="banner warning">
+      <span>
+        {#each store.browserWarnings as w, i}
+          {i ? "; " : ""}{w.browser} ({w.profile}): расширение «{w.extension}»
+        {/each}
+        — {store.browserWarnings.length > 1 ? "задают" : "задаёт"} свой прокси. Пока
+        {store.browserWarnings.length > 1 ? "они включены" : "оно включено"}, браузер не применяет
+        правила LocalProxy: расширения важнее настроек Windows. Отключите в списке расширений браузера,
+        если хотите, чтобы работали правила LocalProxy.
+      </span>
+    </div>
+  {/if}
+  {#if config?.enabled && !active}
+    <div class="banner warning">
+      Outbound не выбран: домены из правил {config.onOutboundDown === "block"
+        ? "блокируются"
+        : "идут напрямую"}. Добавьте его на вкладке «Outbound».
+    </div>
+  {/if}
+  {#if store.error}
+    <div class="banner error">
+      <span>{store.error}</span>
+      <button class="ghost small" onclick={() => (store.error = null)} aria-label="Скрыть">✕</button>
+    </div>
+  {/if}
+  {#if store.notice}
+    <div class="banner notice">{store.notice}</div>
   {/if}
 
+  <nav>
+    <button class:active={tab === "rules"} onclick={() => (tab = "rules")}>
+      Правила <span class="count">{config?.rules.length ?? 0} + {presetCount} набор.</span>
+    </button>
+    <button class:active={tab === "connections"} onclick={() => (tab = "connections")}>
+      Подключения
+    </button>
+    <button class:active={tab === "outbounds"} onclick={() => (tab = "outbounds")}>
+      Outbound <span class="count">{config?.outbounds.length ?? 0}</span>
+    </button>
+    <button class:active={tab === "settings"} onclick={() => (tab = "settings")}>Настройки</button>
+  </nav>
+
   <section class="content">
-    {#if config}
-      <div class="card">
-        <h2>Настройки</h2>
-        <label class="row">
-          <span>Порт</span>
-          <input
-            class="port"
-            type="text"
-            inputmode="numeric"
-            bind:value={portInput}
-            onchange={applyPort}
-            disabled={busy}
-          />
-        </label>
-        <label class="row">
-          <span>Если outbound недоступен</span>
-          <select
-            value={config.onOutboundDown}
-            onchange={(e) =>
-              update((c) => (c.onOutboundDown = e.currentTarget.value as Config["onOutboundDown"]))}
-            disabled={busy}
-          >
-            <option value="block">блокировать эти домены</option>
-            <option value="direct">пускать напрямую</option>
-          </select>
-        </label>
-        <label class="check">
-          <input
-            type="checkbox"
-            checked={config.socks5Enabled}
-            onchange={() => update((c) => (c.socks5Enabled = !c.socks5Enabled))}
-            disabled={busy}
-          />
-          <span>Принимать SOCKS5 на том же порту</span>
-        </label>
-        <label class="check">
-          <input
-            type="checkbox"
-            checked={config.setEnvVars}
-            onchange={() => update((c) => (c.setEnvVars = !c.setEnvVars))}
-            disabled={busy}
-          />
-          <span>
-            HTTP_PROXY / HTTPS_PROXY для консольных программ
-            <span class="hint">— увидят только программы, запущенные после включения</span>
-          </span>
-        </label>
-        <label class="check">
-          <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
-          <span>Запускать при входе в Windows (свёрнутым в трей)</span>
-        </label>
-      </div>
-      <p class="hint">
-        Правил: {config.rules.length}, outbound-профилей: {config.outbounds.length}. Таблица правил и
-        профили — на этапе 4.
-      </p>
-    {:else if !error}
-      <p class="hint">Загрузка…</p>
+    {#if !config}
+      {#if !store.error}<p class="hint">Загрузка…</p>{/if}
+    {:else if tab === "rules"}
+      <RulesTab />
+    {:else if tab === "connections"}
+      <ConnectionsTab />
+    {:else if tab === "outbounds"}
+      <OutboundsTab />
+    {:else}
+      <SettingsTab />
     {/if}
   </section>
 
   <footer>
-    {#if info}
-      <span>v{info.version}</span>
-      <span>Настройки: <code>{info.configPath}</code></span>
+    {#if store.info}
+      <span>v{store.info.version}</span>
+      <span>Настройки: <code>{store.info.configPath}</code></span>
     {/if}
   </footer>
 </main>
@@ -203,7 +144,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 12px 16px;
+    padding: 10px 16px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
   }
@@ -211,23 +152,13 @@
     font-weight: 600;
     font-size: 16px;
   }
-  .spacer {
-    flex: 1;
+  .outbound-pick {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
-  .hint {
-    color: var(--text-secondary);
-    font-size: 13px;
-  }
-  .pill {
-    font-size: 12px;
-    padding: 2px 10px;
-    border-radius: var(--radius);
-    background: var(--surface-alt);
-    color: var(--text-secondary);
-  }
-  .pill.on {
-    background: var(--success-bg);
-    color: var(--success-text);
+  .outbound-pick select {
+    min-width: 160px;
   }
   .toggle {
     position: relative;
@@ -239,7 +170,11 @@
     background: var(--success-text);
     transition: background 0.15s;
   }
-  .toggle.off {
+  .toggle:hover:not(:disabled) {
+    background: var(--success-text);
+  }
+  .toggle.off,
+  .toggle.off:hover:not(:disabled) {
     background: var(--toggle-off);
   }
   .toggle span {
@@ -255,15 +190,17 @@
   .toggle.off span {
     left: 3px;
   }
-  .toggle:disabled {
-    opacity: 0.6;
-    cursor: progress;
-  }
   .banner {
-    margin: 12px 16px 0;
-    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 16px 0;
+    padding: 6px 12px;
     border-radius: var(--radius);
     font-size: 13px;
+  }
+  .banner span {
+    flex: 1;
   }
   .banner.warning {
     background: var(--warning-bg);
@@ -273,55 +210,43 @@
     border: 1px solid var(--danger-text);
     color: var(--danger-text);
   }
+  .banner.notice {
+    background: var(--success-bg);
+    color: var(--success-text);
+  }
+  nav {
+    display: flex;
+    gap: 2px;
+    padding: 8px 16px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  nav button {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    height: 34px;
+  }
+  nav button.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+  .count {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-left: 2px;
+  }
   .content {
     flex: 1;
-    padding: 16px;
+    min-height: 0;
     overflow: auto;
-  }
-  .card {
-    max-width: 640px;
-    padding: 12px 16px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  h2 {
-    margin: 0 0 4px;
-    font-size: 14px;
-    font-weight: 600;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-  .check {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .check input {
-    margin-top: 3px;
-  }
-  input[type="text"],
-  select {
-    height: 30px;
-    padding: 0 8px;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    background: var(--surface);
-  }
-  .port {
-    width: 90px;
+    padding: 14px 16px;
   }
   footer {
     display: flex;
     gap: 16px;
-    padding: 8px 16px;
+    padding: 6px 16px;
     border-top: 1px solid var(--border);
     font-size: 12px;
     color: var(--text-secondary);

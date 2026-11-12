@@ -9,6 +9,7 @@ mod http_inbound;
 pub mod matcher;
 pub mod outbound;
 pub mod pac;
+pub mod probe;
 pub mod router;
 pub mod server;
 mod socks5_inbound;

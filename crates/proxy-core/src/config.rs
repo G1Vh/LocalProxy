@@ -31,6 +31,10 @@ pub struct Config {
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
+    /// Ids of the domain presets the user subscribed to. Their entries are
+    /// added to the rules at runtime from the current preset list, so preset
+    /// updates apply by themselves; they are never copied into `rules`.
+    pub presets: Vec<String>,
 }
 
 impl Default for Config {
@@ -46,6 +50,7 @@ impl Default for Config {
             active_outbound_id: None,
             outbounds: Vec::new(),
             rules: Vec::new(),
+            presets: Vec::new(),
         }
     }
 }
@@ -103,16 +108,13 @@ pub struct Rule {
     pub action: RuleAction,
     #[serde(default)]
     pub comment: String,
-    /// Id of the domain preset this rule came from, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preset: Option<String>,
 }
 
 fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MatchType {
     /// `example.com` matches only `example.com`.
@@ -122,6 +124,9 @@ pub enum MatchType {
     DomainAndSubdomains,
     /// Glob over the whole host name: `*` is any run of characters, `?` one character.
     Mask,
+    /// IP network such as `149.154.160.0/20` or `2001:b28:f23d::/48`; matches
+    /// connections made to an IP address (apps like Telegram Desktop do that).
+    Cidr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -257,8 +262,8 @@ mod tests {
                 match_type: MatchType::DomainAndSubdomains,
                 action: RuleAction::Proxy,
                 comment: String::new(),
-                preset: Some("openai".into()),
             }],
+            presets: vec!["youtube".into()],
             ..Config::default()
         }
     }

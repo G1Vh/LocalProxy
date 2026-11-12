@@ -56,6 +56,9 @@ async fn echo_server() -> u16 {
 async fn origin_server() -> u16 {
     async fn handle(mut req: Request<Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
         match req.uri().path() {
+            "/ip" => Ok(Response::new(Full::new(Bytes::from_static(
+                b"203.0.113.7\n",
+            )))),
             "/hello" => Ok(Response::builder()
                 .header("set-cookie", "a=1")
                 .header("set-cookie", "b=2")
@@ -221,7 +224,6 @@ fn rule(pattern: &str, action: RuleAction) -> Rule {
         match_type: MatchType::Exact,
         action,
         comment: String::new(),
-        preset: None,
     }
 }
 
@@ -656,4 +658,77 @@ async fn serves_pac_and_version_follows_rules() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn probe_reports_external_ip_through_each_upstream_kind() {
+    use proxy_core::outbound::Upstream;
+    use proxy_core::probe::probe_at;
+    use proxy_core::stream::TargetAddr;
+
+    let origin = origin_server().await;
+    let target = TargetAddr::new("127.0.0.1", origin);
+
+    // SOCKS5: a LocalProxy that sends everything direct.
+    let mut direct_cfg = config(None, OnOutboundDown::Block);
+    direct_cfg.rules.clear();
+    let socks = start(&direct_cfg).await;
+    let probe = probe_at(&Upstream::Socks5(endpoint(socks.port())), &target, "/ip")
+        .await
+        .unwrap();
+    assert_eq!(probe.external_ip.as_deref(), Some("203.0.113.7"));
+
+    // HTTP: absolute-form through the fake upstream, with credentials.
+    let (up_port, seen) = fake_http_upstream(Some("Basic dXNlcjpwYXNz")).await;
+    let mut ep = endpoint(up_port);
+    ep.username = "user".into();
+    ep.password = "pass".into();
+    let probe = probe_at(&Upstream::Http(ep), &target, "/ip").await.unwrap();
+    assert_eq!(probe.external_ip.as_deref(), Some("203.0.113.7"));
+    assert_eq!(
+        seen.lines(),
+        vec![format!("GET http://127.0.0.1:{origin}/ip HTTP/1.1")]
+    );
+
+    // Wrong credentials: the outbound is reported as down.
+    let err = probe_at(&Upstream::Http(endpoint(up_port)), &target, "/ip")
+        .await
+        .unwrap_err();
+    assert!(err.is_outbound_down(), "{err}");
+
+    // Not an IP in the body: no external IP, but the outbound works.
+    let probe = probe_at(&Upstream::Socks5(endpoint(socks.port())), &target, "/hello")
+        .await
+        .unwrap();
+    assert_eq!(probe.external_ip, None);
+}
+
+#[tokio::test]
+async fn outbound_pointing_to_itself_is_refused_not_looped() {
+    let echo = echo_server().await;
+    let mut cfg = config(None, OnOutboundDown::Block);
+    let proxy = start(&cfg).await;
+    let mut events = proxy.subscribe();
+
+    // Point the outbound at the proxy's own port, as a user might by mistake.
+    let own = Outbound {
+        id: Uuid::new_v4(),
+        name: "self".into(),
+        kind: OutboundKind::Socks5(ProxyEndpoint {
+            host: "localhost".into(),
+            port: proxy.port(),
+            ..Default::default()
+        }),
+    };
+    cfg.active_outbound_id = Some(own.id);
+    cfg.outbounds = vec![own];
+    proxy.update(&cfg);
+
+    let (status, _) = http_connect(proxy.port(), &format!("localhost:{echo}")).await;
+    assert_eq!(status, 403);
+    let event = events.recv().await.unwrap();
+    assert_eq!(event.route, RouteKind::Blocked);
+    assert!(event.error.unwrap().contains("петля"));
+    // Exactly one connection was routed: no second lap through ourselves.
+    assert!(events.try_recv().is_err());
 }

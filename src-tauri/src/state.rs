@@ -4,9 +4,21 @@ use std::sync::{Mutex, MutexGuard};
 use anyhow::Context;
 use proxy_core::{Config, ProxyServer};
 
+use crate::events::RuleStats;
+use crate::presets::{self, PresetsFile, Source};
 use crate::system::SystemProxy;
 
+/// The preset list in use and where it came from.
+pub struct PresetsState {
+    pub file: PresetsFile,
+    pub source: Source,
+    /// Last download problem, if the newest attempt failed.
+    pub last_error: Option<String>,
+}
+
 pub struct AppState {
+    /// `%APPDATA%\LocalProxy`
+    pub dir: PathBuf,
     pub config_path: PathBuf,
     config: Mutex<Config>,
     /// The running proxy; `None` while routing is off.
@@ -17,6 +29,9 @@ pub struct AppState {
     pub warnings: Vec<String>,
     /// Why the proxy could not start; cleared once it starts.
     start_error: Mutex<Option<String>>,
+    /// Hits per rule since the app started.
+    rule_stats: Mutex<RuleStats>,
+    presets: Mutex<PresetsState>,
 }
 
 impl AppState {
@@ -33,14 +48,26 @@ impl AppState {
             ));
         }
         tracing::info!(path = %path.display(), "config loaded");
+        let (file, source) = presets::load(&dir);
         Ok(Self {
+            presets: Mutex::new(PresetsState {
+                file,
+                source,
+                last_error: None,
+            }),
             config_path: path,
             config: Mutex::new(config),
             proxy: tokio::sync::Mutex::new(None),
             system: SystemProxy::new(&dir),
             warnings,
             start_error: Mutex::new(None),
+            rule_stats: Mutex::new(RuleStats::new()),
+            dir,
         })
+    }
+
+    pub fn presets(&self) -> MutexGuard<'_, PresetsState> {
+        self.presets.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn config(&self) -> MutexGuard<'_, Config> {
@@ -57,6 +84,10 @@ impl AppState {
 
     pub fn set_start_error(&self, error: Option<String>) {
         *self.start_error.lock().unwrap_or_else(|e| e.into_inner()) = error;
+    }
+
+    pub fn rule_stats(&self) -> MutexGuard<'_, RuleStats> {
+        self.rule_stats.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

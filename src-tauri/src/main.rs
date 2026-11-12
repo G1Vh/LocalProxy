@@ -1,10 +1,15 @@
 // Hide the console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod browsers;
 mod commands;
+mod events;
+mod presets;
+mod rules;
 mod state;
 mod system;
 mod tray;
+mod ui_commands;
 
 use tauri::{Manager, RunEvent};
 use tracing_subscriber::EnvFilter;
@@ -38,14 +43,20 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![MINIMIZED_ARG]),
         ))
+        .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             let state = state::AppState::load()?;
-            sync_at_startup(&state);
+            sync_at_startup(app.handle(), &state);
             app.manage(state);
             tray::create(app.handle())?;
             if !start_minimized {
                 tray::show_main_window(app.handle());
             }
+            // Fresh preset list from GitHub, in the background.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                ui_commands::refresh_presets_inner(&handle).await;
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -62,6 +73,17 @@ fn main() {
             commands::set_enabled,
             commands::get_autostart,
             commands::set_autostart,
+            ui_commands::normalize_rule_pattern,
+            ui_commands::check_host,
+            ui_commands::test_outbound,
+            ui_commands::get_presets,
+            ui_commands::refresh_presets,
+            ui_commands::get_rule_stats,
+            ui_commands::add_rule_lines,
+            ui_commands::set_preset_selected,
+            ui_commands::export_rules,
+            ui_commands::import_rules,
+            ui_commands::get_browser_warnings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building LocalProxy");
@@ -80,10 +102,11 @@ fn main() {
 
 /// Restores routing after a restart, or cleans up after a crash: if the last
 /// run died with Windows pointed at our PAC, the backup puts it back.
-fn sync_at_startup(state: &state::AppState) {
+fn sync_at_startup(app: &tauri::AppHandle, state: &state::AppState) {
     let mut config = state.config().clone();
     let was_enabled = config.enabled;
-    let Some(error) = tauri::async_runtime::block_on(commands::sync_runtime(state, &mut config))
+    let Some(error) =
+        tauri::async_runtime::block_on(commands::sync_runtime(app, state, &mut config))
     else {
         return;
     };
