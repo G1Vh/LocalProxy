@@ -275,6 +275,12 @@ pub fn get_rule_stats(state: State<'_, AppState>) -> RuleStats {
     state.rule_stats().clone()
 }
 
+/// Hits per hidden feed entry since the app started.
+#[tauri::command]
+pub fn get_hidden_stats(state: State<'_, AppState>) -> RuleStats {
+    state.hidden_stats().clone()
+}
+
 #[tauri::command]
 pub async fn add_rule_lines(
     app: AppHandle,

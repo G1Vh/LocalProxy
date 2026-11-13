@@ -35,6 +35,7 @@ export const testOutbound = (outbound: Outbound) => invoke<Probe>("test_outbound
 export const getPresets = () => invoke<PresetsInfo>("get_presets");
 export const refreshPresets = () => invoke<PresetsInfo>("refresh_presets");
 export const getRuleStats = () => invoke<Record<string, RuleStat>>("get_rule_stats");
+export const getHiddenStats = () => invoke<Record<string, RuleStat>>("get_hidden_stats");
 export const addRuleLines = (text: string) => invoke<RulesChange>("add_rule_lines", { text });
 export const setPresetSelected = (id: string, selected: boolean) =>
   invoke<Config>("set_preset_selected", { id, selected });
@@ -63,6 +64,10 @@ export const onAppError = (handler: (message: string) => void): Promise<Unlisten
 /** Batches of connection events while the proxy runs. */
 export const onConnEvents = (handler: (events: ConnEvent[]) => void): Promise<UnlistenFn> =>
   listen<ConnEvent[]>("conn-events", (event) => handler(event.payload));
+
+/** Hits per hidden feed entry, sent when some were hidden. */
+export const onHiddenStats = (handler: (stats: Record<string, RuleStat>) => void): Promise<UnlistenFn> =>
+  listen<Record<string, RuleStat>>("hidden-stats", (event) => handler(event.payload));
 
 export const onPresetsChanged = (handler: (info: PresetsInfo) => void): Promise<UnlistenFn> =>
   listen<PresetsInfo>("presets-changed", (event) => handler(event.payload));

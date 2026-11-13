@@ -42,6 +42,8 @@ pub struct AppState {
     tunnel_errors: Mutex<HashMap<Uuid, String>>,
     /// Hits per rule since the app started.
     rule_stats: Mutex<RuleStats>,
+    /// Feed entries hidden since the app started, per hidden entry.
+    hidden_stats: Mutex<RuleStats>,
     presets: Mutex<PresetsState>,
     /// Whether the outbounds in use work; see [`crate::health`].
     health: Mutex<HealthState>,
@@ -82,6 +84,7 @@ impl AppState {
             start_error: Mutex::new(None),
             tunnel_errors: Mutex::default(),
             rule_stats: Mutex::new(RuleStats::new()),
+            hidden_stats: Mutex::new(RuleStats::new()),
             health: Mutex::default(),
             health_poke: Arc::new(Notify::new()),
             traffic: Arc::default(),
@@ -141,6 +144,10 @@ impl AppState {
 
     pub fn rule_stats(&self) -> MutexGuard<'_, RuleStats> {
         self.rule_stats.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn hidden_stats(&self) -> MutexGuard<'_, RuleStats> {
+        self.hidden_stats.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

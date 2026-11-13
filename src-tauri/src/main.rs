@@ -90,6 +90,7 @@ fn main() {
             ui_commands::get_presets,
             ui_commands::refresh_presets,
             ui_commands::get_rule_stats,
+            ui_commands::get_hidden_stats,
             ui_commands::add_rule_lines,
             ui_commands::set_preset_selected,
             ui_commands::export_rules,

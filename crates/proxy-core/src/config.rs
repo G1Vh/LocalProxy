@@ -45,6 +45,11 @@ pub struct Config {
     /// Outbound per selected preset; a preset not listed uses the default.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub preset_outbounds: BTreeMap<String, Uuid>,
+    /// Entries hidden from the connections feed (a program knocking on a
+    /// closed port, say). Only the feed: routing, channel health and
+    /// statistics still see them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden_events: Vec<HiddenEvent>,
     /// Ids of the domain presets the user subscribed to. Their entries are
     /// added to the rules at runtime from the current preset list, so preset
     /// updates apply by themselves; they are never copied into `rules`.
@@ -69,6 +74,7 @@ impl Default for Config {
             presets: Vec::new(),
             preset_outbounds: BTreeMap::new(),
             forwards: Vec::new(),
+            hidden_events: Vec::new(),
         }
     }
 }
@@ -134,6 +140,24 @@ pub struct ProxyEndpoint {
     pub port: u16,
     pub username: String,
     pub password: String,
+}
+
+/// Feed entries to hide: by program, host and port; an absent part matches
+/// any.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HiddenEvent {
+    pub id: Uuid,
+    /// Program file name, e.g. `rustdesk.exe`; case does not matter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Hide only failed connections; successful ones stay in the feed.
+    #[serde(default = "default_true")]
+    pub errors_only: bool,
 }
 
 /// `127.0.0.1:local_port` leads to `target_host:target_port` through an outbound.

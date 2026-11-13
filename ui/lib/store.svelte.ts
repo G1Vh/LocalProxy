@@ -6,6 +6,7 @@ import type {
   Config,
   ConnEvent,
   HealthState,
+  HiddenEvent,
   PresetsInfo,
   ProxyExtension,
   RuleStat,
@@ -22,6 +23,8 @@ class Store {
   presets = $state<PresetsInfo | null>(null);
   /** Hits per rule id since the app started. */
   stats = $state<Record<string, RuleStat>>({});
+  /** Hits per hidden feed entry since the app started. */
+  hiddenStats = $state<Record<string, RuleStat>>({});
   /** Newest first. */
   events = $state<ConnEvent[]>([]);
   error = $state<string | null>(null);
@@ -47,20 +50,23 @@ class Store {
       }),
       api.onAppError((message) => (this.error = message)),
       api.onConnEvents((batch) => this.addEvents(batch)),
+      api.onHiddenStats((stats) => (this.hiddenStats = stats)),
       api.onPresetsChanged((info) => (this.presets = info)),
       api.onHealth((h) => (this.health = h)),
       api.onUpdateAvailable((u) => (this.newVersion = u)),
       api.onUpdateProgress((p) => (this.updateProgress = p)),
     ];
     try {
-      const [config, info, presets, stats, health, update] = await Promise.all([
+      const [config, info, presets, stats, health, update, hiddenStats] = await Promise.all([
         api.getConfig(),
         api.getAppInfo(),
         api.getPresets(),
         api.getRuleStats(),
         api.getHealth(),
         api.getPendingUpdate(),
+        api.getHiddenStats(),
       ]);
+      this.hiddenStats = hiddenStats;
       this.health = health;
       this.newVersion = update;
       this.config = config;
@@ -165,6 +171,17 @@ class Store {
 }
 
 export const store = new Store();
+
+/** Whether a hidden-feed entry covers this connection (the app does the same). */
+export function hides(h: HiddenEvent, e: ConnEvent): boolean {
+  if (h.errorsOnly && !e.error) return false;
+  const program = e.process?.slice(Math.max(e.process.lastIndexOf("\\"), e.process.lastIndexOf("/")) + 1);
+  return (
+    (h.process === undefined || program?.toLowerCase() === h.process) &&
+    (h.host === undefined || e.host.toLowerCase() === h.host) &&
+    (h.port === undefined || e.port === h.port)
+  );
+}
 
 export function newId(): string {
   return crypto.randomUUID();

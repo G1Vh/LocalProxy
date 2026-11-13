@@ -61,6 +61,19 @@ export interface Config {
   presetOutbounds?: Record<string, string>;
   /** Local ports led to a fixed address through an outbound. */
   forwards?: PortForward[];
+  /** Entries hidden from the connections feed. */
+  hiddenEvents?: HiddenEvent[];
+}
+
+/** Feed entries to hide: by program, host and port; an absent part matches any. */
+export interface HiddenEvent {
+  id: string;
+  /** Program file name, lowercase. */
+  process?: string;
+  host?: string;
+  port?: number;
+  /** Hide only failed connections. */
+  errorsOnly: boolean;
 }
 
 export interface AppInfo {
