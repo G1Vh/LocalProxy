@@ -57,6 +57,8 @@ export interface Config {
   presets: string[];
   /** Outbound per selected preset; a preset not listed uses the default. */
   presetOutbounds?: Record<string, string>;
+  /** Local ports led to a fixed address through an outbound. */
+  forwards?: PortForward[];
 }
 
 export interface AppInfo {
@@ -67,7 +69,7 @@ export interface AppInfo {
   startError: string | null;
 }
 
-export type Inbound = "http" | "connect" | "socks5";
+export type Inbound = "http" | "connect" | "socks5" | "udp" | "forward";
 export type RouteKind = "direct" | "proxy" | "fallback" | "blocked" | "failed";
 
 export interface ConnEvent {
@@ -147,6 +149,23 @@ export interface TunnelStatus {
 }
 
 /** Overall verdict plus one per outbound in use (only "up" / "down" there). */
+export interface PortForward {
+  id: string;
+  enabled: boolean;
+  localPort: number;
+  targetHost: string;
+  targetPort: number;
+  /** Absent or null: the default outbound. */
+  outbound?: string | null;
+  comment: string;
+}
+
+export type ForwardStatus = { id: string; connections: number } & (
+  | { state: "starting" }
+  | { state: "listening" }
+  | { state: "failed"; reason: string }
+);
+
 export interface HealthState {
   overall: Health;
   outbounds: Record<string, Health>;

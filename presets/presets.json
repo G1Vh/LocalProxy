@@ -1,5 +1,5 @@
 {
-  "revision": 1,
+  "revision": 2,
   "presets": [
     {
       "id": "openai",
@@ -114,6 +114,22 @@
         "discordactivities.com",
         "discordsays.com",
         "discord-attachments-uploads-prd.storage.googleapis.com"
+      ]
+    },
+    {
+      "id": "netflix",
+      "name": "Netflix",
+      "note": "Сайт, приложение, картинки и видеопоток (nflxvideo.net), а также fast.com — тест скорости Netflix.",
+      "domains": [
+        "netflix.com",
+        "netflix.net",
+        "nflxext.com",
+        "nflximg.com",
+        "nflximg.net",
+        "nflxso.net",
+        "nflxvideo.net",
+        "nflxsearch.net",
+        "fast.com"
       ]
     }
   ]

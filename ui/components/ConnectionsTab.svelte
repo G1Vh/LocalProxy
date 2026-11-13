@@ -20,9 +20,9 @@
   });
 
   const time = (ms: number) =>
-    new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-  const inbound = { http: "HTTP", connect: "HTTPS", socks5: "SOCKS5" } as const;
+  const inbound = { http: "HTTP", connect: "HTTPS", socks5: "SOCKS5", udp: "UDP", forward: "порт" } as const;
 
   async function addToRules(e: ConnEvent) {
     const change = await store.run(() => api.addRuleLines(e.host));
@@ -30,8 +30,8 @@
     store.config = change.config;
     store.say(
       change.report.added
-        ? `${e.host} добавлен в правила: пойдёт через outbound`
-        : `${e.host} уже есть в правилах`,
+        ? `${e.host} добавлен в правила`
+        : `${e.host} уже в правилах`,
     );
   }
 </script>
@@ -48,34 +48,32 @@
   <div class="toolbar">
     <input type="search" placeholder="Фильтр по адресу" bind:value={filter} />
     <label class="check"
-      ><input type="checkbox" bind:checked={onlyNotable} /> только outbound, блокировки и ошибки</label
+      ><input type="checkbox" bind:checked={onlyNotable} /> без «напрямую»</label
     >
     <span class="spacer"></span>
-    <span class="hint">{store.events.length} в ленте</span>
+    <span class="hint">{store.events.length}</span>
     <button onclick={() => (store.events = [])} disabled={!store.events.length}>Очистить</button>
   </div>
 
   {#if !store.config?.enabled}
-    <p class="hint">Прокси выключен — подключений нет. Включите его переключателем вверху.</p>
+    <p class="hint">LocalProxy выключен.</p>
   {:else if store.events.length === 0}
-    <p class="hint">
-      Пока пусто. Сюда попадают соединения, которые идут через LocalProxy: домены из правил (через
-      PAC) и всё от программ, настроенных на него вручную или через HTTP_PROXY.
-    </p>
+    <p class="hint">Пока пусто.</p>
   {/if}
 
   {#if events.length}
+    <div class="table-wrap">
     <table>
       <tbody>
         {#each events as e, i (e.atMs + e.host + i)}
           {@const route = ROUTES[e.route]}
+          {@const via = store.outboundName(e.outboundId)}
           <tr>
             <td class="c-time hint mono">{time(e.atMs)}</td>
             <td class="c-route">
-            <span class="pill {route.css}">{route.label}</span>
-            {#if e.outboundId && e.route !== "direct"}
-              <span class="hint">{store.outboundName(e.outboundId) ?? ""}</span>
-            {/if}
+            <span class="pill route {route.css}" title={via ? `канал «${via}»` : ""}>
+              {e.route === "proxy" && via ? via : route.label}
+            </span>
           </td>
             <td class="c-in hint">{inbound[e.inbound]}</td>
             <td class="c-host">
@@ -86,8 +84,8 @@
               {#if e.error}<div class="err">{e.error}</div>{/if}
             </td>
             <td class="c-act">
-              {#if !e.ruleId}
-                <button class="small" onclick={() => addToRules(e)} title="Отправлять этот адрес через outbound">
+              {#if !e.ruleId && e.inbound !== "forward"}
+                <button class="small" onclick={() => addToRules(e)} title="Добавить в правила">
                   + в правила
                 </button>
               {/if}
@@ -96,6 +94,7 @@
         {/each}
       </tbody>
     </table>
+    </div>
   {/if}
 </div>
 {/if}
@@ -128,21 +127,8 @@
     gap: 6px;
     font-size: 13px;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
   td {
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
     vertical-align: top;
-  }
-  tr:last-child td {
-    border-bottom: none;
   }
   .c-host {
     overflow: hidden;
@@ -156,6 +142,13 @@
   }
   .c-time {
     width: 80px;
+    white-space: nowrap;
+  }
+  .route {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
   }
   .c-route {
     width: 190px;
@@ -166,5 +159,16 @@
   .c-act {
     width: 110px;
     text-align: right;
+  }
+  @container (max-width: 640px) {
+    .c-in {
+      display: none;
+    }
+    .c-route {
+      width: 150px;
+    }
+    .c-act {
+      width: 96px;
+    }
   }
 </style>

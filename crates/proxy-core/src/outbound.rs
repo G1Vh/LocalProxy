@@ -22,10 +22,10 @@ const MAX_RESPONSE_HEAD: usize = 16 * 1024;
 pub enum ConnectError {
     /// The outbound itself cannot be used: unreachable, timed out, bad credentials,
     /// broken handshake or not configured. Subject to the on-outbound-down policy.
-    #[error("outbound недоступен: {0}")]
+    #[error("канал недоступен: {0}")]
     OutboundDown(String),
     /// The outbound works but could not reach the target.
-    #[error("outbound не смог подключиться к {target}: {reason}")]
+    #[error("канал не смог подключиться к {target}: {reason}")]
     Rejected { target: String, reason: String },
     /// Direct connection to the target failed.
     #[error("не удалось подключиться к {target}: {source}")]

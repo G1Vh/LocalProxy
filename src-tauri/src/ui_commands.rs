@@ -102,6 +102,18 @@ pub struct TunnelInfo {
     status: TunnelStatus,
 }
 
+/// State of the enabled port forwards; empty while routing is off.
+#[tauri::command]
+pub async fn get_forward_status(
+    state: State<'_, AppState>,
+) -> Result<Vec<proxy_core::ForwardStatus>, String> {
+    let proxy = state.proxy.lock().await;
+    Ok(proxy
+        .as_ref()
+        .map(|p| p.forward_status())
+        .unwrap_or_default())
+}
+
 /// State of the running tunnels, for the outbound tab.
 #[tauri::command]
 pub async fn get_tunnel_status(state: State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {

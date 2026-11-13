@@ -6,8 +6,9 @@
   import ConnectionsTab from "./components/ConnectionsTab.svelte";
   import OutboundsTab from "./components/OutboundsTab.svelte";
   import SettingsTab from "./components/SettingsTab.svelte";
+  import PortsTab from "./components/PortsTab.svelte";
 
-  type Tab = "rules" | "connections" | "outbounds" | "settings";
+  type Tab = "rules" | "ports" | "connections" | "outbounds" | "settings";
   let tab = $state<Tab>("rules");
 
   onMount(() => {
@@ -49,7 +50,7 @@
     {#if config}
       {@const h = store.health.overall}
       <span
-        class="pill"
+        class="pill status"
         class:ok={config.enabled && h.state === "up"}
         class:warn={config.enabled && h.state !== "up"}
         title={h.state === "down" ? h.reason : ""}
@@ -57,20 +58,20 @@
         {#if !config.enabled}
           Выключен
         {:else if h.state === "up"}
-          Включён · 127.0.0.1:{config.port} · {Object.keys(store.health.outbounds).length > 1
-            ? "outbound'ы работают"
-            : "outbound работает"}
+          Включён · {Object.keys(store.health.outbounds).length > 1
+            ? "каналы работают"
+            : "канал работает"}
         {:else if h.state === "down"}
-          Включён · {downCount > 1 ? `недоступно outbound'ов: ${downCount}` : "outbound недоступен"}
+          Включён · {downCount > 1 ? `недоступно каналов: ${downCount}` : "канал недоступен"}
         {:else if h.state === "noOutbound"}
-          Включён · outbound не выбран
+          Включён · канал не выбран
         {:else}
           Включён · 127.0.0.1:{config.port}
         {/if}
       </span>
-      <span class="spacer"></span>
+      <div class="controls">
       <label class="outbound-pick">
-        <span class="hint" title="Для правил и наборов без своего outbound">По умолчанию</span>
+        <span class="hint" title="Для правил и наборов без своего канала">По умолчанию</span>
         <select
           value={config.activeOutboundId ?? ""}
           onchange={(e) => selectOutbound(e.currentTarget.value)}
@@ -93,6 +94,7 @@
       >
         <span></span>
       </button>
+      </div>
     {/if}
   </header>
 
@@ -103,37 +105,33 @@
     <div class="banner warning">
       <span>
         {#each store.browserWarnings as w, i}
-          {i ? "; " : ""}{w.browser} ({w.profile}): расширение «{w.extension}»
+          {i ? "; " : ""}{w.browser} ({w.profile}): «{w.extension}»
         {/each}
-        — {store.browserWarnings.length > 1 ? "задают" : "задаёт"} свой прокси. Пока
-        {store.browserWarnings.length > 1 ? "они включены" : "оно включено"}, браузер не применяет
-        правила LocalProxy: расширения важнее настроек Windows. Отключите в списке расширений браузера,
-        если хотите, чтобы работали правила LocalProxy.
+        — расширение перехватывает прокси, правила LocalProxy в этом браузере не действуют.
       </span>
     </div>
   {/if}
   {#if config?.enabled && store.health.overall.state === "down"}
     <div class="banner warning">
-      {downCount > 1 ? "Недоступны" : "Недоступен"}: {store.health.overall.reason}. Их домены
-      {config.onOutboundDown === "block" ? "заблокированы" : "идут напрямую"}, пока outbound не вернётся.
+      {downCount > 1 ? "Недоступны" : "Недоступен"}: {store.health.overall.reason}. Домены
+      {config.onOutboundDown === "block" ? "блокируются" : "идут напрямую"}.
     </div>
   {/if}
   {#if config?.enabled && !active}
     <div class="banner warning">
-      Outbound по умолчанию не выбран: правила и наборы без своего outbound {config.onOutboundDown ===
-      "block"
+      Канал по умолчанию не выбран — правила без своего канала {config.onOutboundDown === "block"
         ? "блокируются"
-        : "идут напрямую"}. Выберите его вверху или добавьте на вкладке «Outbound».
+        : "идут напрямую"}.
     </div>
   {/if}
   {#if store.newVersion}
     <div class="banner notice">
       <span>
-        Доступна версия {store.newVersion.version} (у вас {store.newVersion.currentVersion}).
+        Доступна версия {store.newVersion.version}.
         {#if progress}{progress}…{/if}
       </span>
       {#if !store.updateProgress}
-        <button class="small" onclick={() => store.installUpdate()}>Установить и перезапустить</button>
+        <button class="small" onclick={() => store.installUpdate()}>Обновить</button>
       {/if}
     </div>
   {/if}
@@ -149,13 +147,16 @@
 
   <nav>
     <button class:active={tab === "rules"} onclick={() => (tab = "rules")}>
-      Правила <span class="count">{config?.rules.length ?? 0} + {presetCount} набор.</span>
+      Правила <span class="count" title="правил + наборов">{config?.rules.length ?? 0} + {presetCount}</span>
+    </button>
+    <button class:active={tab === "ports"} onclick={() => (tab = "ports")}>
+      Порты {#if config?.forwards?.length}<span class="count">{config.forwards.length}</span>{/if}
     </button>
     <button class:active={tab === "connections"} onclick={() => (tab = "connections")}>
       Подключения
     </button>
     <button class:active={tab === "outbounds"} onclick={() => (tab = "outbounds")}>
-      Outbound <span class="count">{config?.outbounds.length ?? 0}</span>
+      Каналы <span class="count">{config?.outbounds.length ?? 0}</span>
     </button>
     <button class:active={tab === "settings"} onclick={() => (tab = "settings")}>Настройки</button>
   </nav>
@@ -165,6 +166,8 @@
       {#if !store.error}<p class="hint">Загрузка…</p>{/if}
     {:else if tab === "rules"}
       <RulesTab />
+    {:else if tab === "ports"}
+      <PortsTab />
     {:else if tab === "connections"}
       <ConnectionsTab />
     {:else if tab === "outbounds"}
@@ -177,7 +180,7 @@
   <footer>
     {#if store.info}
       <span>v{store.info.version}</span>
-      <span>Настройки: <code>{store.info.configPath}</code></span>
+      <span title={store.info.configPath}>Конфиг: <code>{store.info.configPath}</code></span>
     {/if}
   </footer>
 </main>
@@ -191,7 +194,8 @@
   header {
     display: flex;
     align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px 10px;
     padding: 10px 16px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
@@ -200,13 +204,26 @@
     font-weight: 600;
     font-size: 16px;
   }
+  .status {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+  }
   .outbound-pick {
     display: flex;
     align-items: center;
     gap: 6px;
+    white-space: nowrap;
   }
   .outbound-pick select {
-    min-width: 160px;
+    width: 180px;
   }
   .toggle {
     position: relative;
@@ -267,6 +284,8 @@
     gap: 2px;
     padding: 8px 16px 0;
     border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: none;
   }
   nav button {
     border: none;
@@ -288,8 +307,11 @@
   .content {
     flex: 1;
     min-height: 0;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     padding: 14px 16px;
+    /* Tabs adapt their tables to this width. */
+    container-type: inline-size;
   }
   footer {
     display: flex;
@@ -298,5 +320,11 @@
     border-top: 1px solid var(--border);
     font-size: 12px;
     color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  footer span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

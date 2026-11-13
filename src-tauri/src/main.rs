@@ -94,6 +94,7 @@ fn main() {
             ui_commands::import_rules,
             ui_commands::get_browser_warnings,
             ui_commands::get_tunnel_status,
+            ui_commands::get_forward_status,
             ui_commands::get_traffic,
             ui_commands::reset_traffic,
             health::get_health,

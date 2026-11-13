@@ -28,10 +28,10 @@
     const ids = [...new Set(rows.filter((r) => r.outboundId).map((r) => r.outboundId!))];
     return [
       ...ids.map((id) => ({
-        label: `Через «${store.outboundName(id) ?? "удалённый outbound"}»`,
+        label: `Через «${store.outboundName(id) ?? "удалённый канал"}»`,
         bytes: sum(rows.filter((r) => r.outboundId === id)),
       })),
-      { label: "Напрямую через LocalProxy", bytes: sum(rows.filter((r) => !r.viaOutbound)) },
+      { label: "Напрямую", bytes: sum(rows.filter((r) => !r.viaOutbound)) },
     ];
   });
 
@@ -52,13 +52,14 @@
   </div>
   <div class="toolbar">
     <input type="search" placeholder="Фильтр по адресу" bind:value={filter} />
-    <label class="check"><input type="checkbox" bind:checked={onlyOutbound} /> только через outbound</label>
+    <label class="check"><input type="checkbox" bind:checked={onlyOutbound} /> только через каналы</label>
     <span class="spacer"></span>
-    <span class="hint">с запуска программы</span>
+    <span class="hint">с запуска</span>
     <button onclick={reset} disabled={!rows.length}>Сбросить</button>
   </div>
 
   {#if shown.length}
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -66,31 +67,32 @@
           <th class="c-via">Маршрут</th>
           <th class="c-num">Получено</th>
           <th class="c-num">Отправлено</th>
-          <th class="c-num">Соединений</th>
+          <th class="c-num c-conn">Соединений</th>
           <th class="c-last">Последнее</th>
         </tr>
       </thead>
       <tbody>
         {#each shown as r (r.host + r.outboundId + r.udp)}
           <tr>
-            <td class="mono host">{r.host}</td>
+            <td class="mono host" title={r.host}>{r.host}</td>
             <td>
-              <span class="pill" class:proxy={r.viaOutbound}>
-                {r.viaOutbound ? (store.outboundName(r.outboundId) ?? "outbound") : "напрямую"}
+              <span class="pill via" class:proxy={r.viaOutbound}>
+                {r.viaOutbound ? (store.outboundName(r.outboundId) ?? "канал") : "напрямую"}
               </span>
               {#if r.udp}<span class="pill" title="UDP через SOCKS5">UDP</span>{/if}
             </td>
             <td class="c-num">{bytes(r.down)}</td>
             <td class="c-num">{bytes(r.up)}</td>
-            <td class="c-num">{r.connections}</td>
-            <td class="hint">{timeAgo(r.lastMs)}</td>
+            <td class="c-num c-conn">{r.connections}</td>
+            <td class="hint c-last ellipsis">{timeAgo(r.lastMs)}</td>
           </tr>
         {/each}
       </tbody>
     </table>
+    </div>
   {:else}
     <p class="hint">
-      {rows.length ? "Ничего не найдено." : "Пока пусто: трафик появится, когда через LocalProxy пойдут соединения."}
+      {rows.length ? "Ничего не найдено." : "Пока пусто."}
     </p>
   {/if}
 </div>
@@ -103,7 +105,7 @@
   }
   .totals {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 10px;
   }
   .tile {
@@ -123,32 +125,10 @@
     gap: 6px;
     font-size: 13px;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
-  th {
-    text-align: left;
-    font-weight: 500;
-    font-size: 12.5px;
-    color: var(--text-secondary);
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  td {
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
-  }
-  tbody tr:last-child td {
-    border-bottom: none;
-  }
   .host {
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
     -webkit-user-select: text;
     user-select: text;
   }
@@ -161,5 +141,24 @@
   }
   .c-last {
     width: 120px;
+  }
+  .c-via {
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .via {
+    max-width: calc(100% - 40px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+  @container (max-width: 720px) {
+    .c-conn,
+    .c-last {
+      display: none;
+    }
+    .c-num {
+      width: 84px;
+    }
   }
 </style>

@@ -232,7 +232,7 @@ async fn sync_tunnels(
                 tracing::error!(outbound = %w.name, "tunnel: {e}");
                 // Retries repeat the same error: show it once.
                 if state.set_tunnel_error(w.id, Some(e.clone())) {
-                    let _ = app.emit(APP_ERROR, format!("Outbound «{}»: {e}", w.name));
+                    let _ = app.emit(APP_ERROR, format!("Канал «{}»: {e}", w.name));
                 }
             }
         }

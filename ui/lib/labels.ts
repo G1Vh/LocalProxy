@@ -4,18 +4,18 @@ export const MATCH_TYPES: { value: MatchType; label: string; hint: string }[] = 
   { value: "domainAndSubdomains", label: "домен и поддомены", hint: "openai.com → и api.openai.com" },
   { value: "exact", label: "только точно", hint: "ровно этот адрес" },
   { value: "mask", label: "маска", hint: "* — любые символы, ? — один" },
-  { value: "cidr", label: "подсеть", hint: "149.154.160.0/20, для программ, идущих по IP" },
+  { value: "cidr", label: "подсеть", hint: "149.154.160.0/20 — для адресов по IP" },
 ];
 
 export const ACTIONS: { value: RuleAction; label: string }[] = [
-  { value: "proxy", label: "через outbound" },
+  { value: "proxy", label: "через канал" },
   { value: "direct", label: "напрямую" },
 ];
 
 export const ROUTES: Record<RouteKind, { label: string; css: string }> = {
-  proxy: { label: "outbound", css: "proxy" },
+  proxy: { label: "канал", css: "proxy" },
   direct: { label: "напрямую", css: "" },
-  fallback: { label: "напрямую (outbound упал)", css: "warn" },
+  fallback: { label: "напрямую (сбой)", css: "warn" },
   blocked: { label: "заблокировано", css: "bad" },
   failed: { label: "ошибка", css: "bad" },
 };

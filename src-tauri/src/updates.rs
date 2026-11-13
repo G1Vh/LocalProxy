@@ -117,10 +117,7 @@ fn notify_once(app: &AppHandle, info: &UpdateInfo) {
         }
         *notified = Some(info.version.clone());
     }
-    let body = format!(
-        "Доступна версия {}. Установить можно в окне программы.",
-        info.version
-    );
+    let body = format!("Доступна версия {}.", info.version);
     if let Err(e) = app
         .notification()
         .builder()

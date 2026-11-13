@@ -10,7 +10,45 @@
   let pasteText = $state("");
   let checkInput = $state("");
   let checkResult = $state<{ text: string; proxy: boolean } | null>(null);
-  let openNotes = $state<Record<string, boolean>>({});
+  // The preset block can fold into one line; remembered per computer.
+  const FOLD_KEY = "localproxy.presetsOpen";
+  let presetsOpen = $state(readFold());
+  function readFold() {
+    try {
+      return localStorage.getItem(FOLD_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  }
+  function toggleFold() {
+    presetsOpen = !presetsOpen;
+    try {
+      localStorage.setItem(FOLD_KEY, presetsOpen ? "1" : "0");
+    } catch {
+      // Not remembered, that is all.
+    }
+  }
+
+  // Preset whose domains are shown in the dialog.
+  let shownPresetId = $state<string | null>(null);
+  let entryFilter = $state("");
+  const shownPreset = $derived(store.presets?.presets.find((p) => p.id === shownPresetId) ?? null);
+  const shownEntries = $derived.by(() => {
+    const q = entryFilter.trim().toLowerCase();
+    const entries = shownPreset?.entries ?? [];
+    return q ? entries.filter((e) => e.pattern.includes(q)) : entries;
+  });
+  function showPreset(id: string) {
+    entryFilter = "";
+    shownPresetId = id;
+  }
+
+  const selectedNames = $derived(
+    (store.presets?.presets ?? [])
+      .filter((p) => config.presets.includes(p.id))
+      .map((p) => p.name)
+      .join(", "),
+  );
 
   let newPattern = $state("");
   let newType = $state<MatchType>("domainAndSubdomains");
@@ -167,16 +205,16 @@
     const rule = store.ruleLabel(result.ruleId);
     const proxy = result.action === "proxy";
     const via = store.outboundName(result.outboundId);
-    const how = proxy ? (via ? `через «${via}»` : "через outbound (не выбран)") : "напрямую";
+    const how = proxy ? (via ? `через «${via}»` : "через канал (не выбран)") : "напрямую";
     checkResult = {
       proxy,
-      text: rule ? `${result.host} → ${how} (правило ${rule})` : `${result.host} → напрямую (нет правила)`,
+      text: rule ? `${result.host} → ${how} (${rule})` : `${result.host} → напрямую`,
     };
   }
 </script>
 
 {#snippet routeOptions()}
-  <option value="proxy">через outbound{defaultName ? ` (${defaultName})` : ""}</option>
+  <option value="proxy">через канал{defaultName ? ` (${defaultName})` : ""}</option>
   {#each config.outbounds.filter((o) => o.id !== config.activeOutboundId) as o (o.id)}
     <option value={"proxy:" + o.id}>через «{o.name}»</option>
   {/each}
@@ -186,56 +224,55 @@
 <div class="stack">
   <div class="card presets">
     <div class="toolbar">
-      <h3>Наборы доменов</h3>
-      <span class="hint">
-        ревизия {store.presets?.revision ?? "—"}, {presetSource}. Отмеченные наборы обновляются сами.
-      </span>
+      <button class="ghost fold" onclick={toggleFold} aria-expanded={presetsOpen} title="Отмеченные наборы обновляются сами">
+        <span class="chev" class:open={presetsOpen}>▸</span>
+        <h3>Наборы доменов</h3>
+      </button>
+      <span class="hint">выбрано {config.presets.length} из {store.presets?.presets.length ?? 0}</span>
+      {#if !presetsOpen && selectedNames}
+        <span class="hint ellipsis selected-names">· {selectedNames}</span>
+      {/if}
       <span class="spacer"></span>
-      <button class="small" onclick={refreshPresets} disabled={store.busy}>Проверить обновления</button>
+      {#if presetsOpen}
+        <span class="hint revision">ревизия {store.presets?.revision ?? "—"}, {presetSource}</span>
+        <button class="small" onclick={refreshPresets} disabled={store.busy}>Проверить обновления</button>
+      {/if}
     </div>
-    <div class="preset-list">
-      {#each store.presets?.presets ?? [] as preset (preset.id)}
-        {@const selected = config.presets.includes(preset.id)}
-        <div class="preset" class:selected>
-          <label>
-            <input
-              type="checkbox"
-              checked={selected}
-              onchange={() => togglePreset(preset.id, !selected)}
-              disabled={store.busy}
-            />
-            <span class="name">{preset.name}</span>
-          </label>
-          <span class="hint">{preset.entries.length} зап.</span>
-          {#if selected && config.outbounds.length > 1}
-            <select
-              class="preset-outbound"
-              value={config.presetOutbounds?.[preset.id] ?? ""}
-              onchange={(e) => setPresetOutbound(preset.id, e.currentTarget.value)}
-              disabled={store.busy}
-              title="Через какой outbound идёт набор"
-            >
-              <option value="">по умолчанию</option>
-              {#each config.outbounds as o (o.id)}<option value={o.id}>{o.name}</option>{/each}
-            </select>
-          {/if}
-          {#if presetHits(preset.entries)}
-            <span class="pill proxy">{presetHits(preset.entries)}</span>
-          {/if}
-          <button
-            class="ghost small"
-            onclick={() => (openNotes[preset.id] = !openNotes[preset.id])}
-            aria-label="Подробнее">{openNotes[preset.id] ? "▴" : "▾"}</button
-          >
-          {#if openNotes[preset.id]}
-            <div class="note">
-              {#if preset.note}<p>{preset.note}</p>{/if}
-              <p class="mono">{preset.entries.map((e) => e.pattern).join(", ")}</p>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
+    {#if presetsOpen}
+      <div class="preset-list">
+        {#each store.presets?.presets ?? [] as preset (preset.id)}
+          {@const selected = config.presets.includes(preset.id)}
+          {@const hits = presetHits(preset.entries)}
+          <div class="preset" class:selected>
+            <label title={preset.name}>
+              <input
+                type="checkbox"
+                checked={selected}
+                onchange={() => togglePreset(preset.id, !selected)}
+                disabled={store.busy}
+              />
+              <span class="name">{preset.name}</span>
+            </label>
+            {#if hits}<span class="pill proxy" title="Срабатываний с запуска">{hits}</span>{/if}
+            {#if selected && config.outbounds.length > 1}
+              <select
+                class="preset-outbound"
+                value={config.presetOutbounds?.[preset.id] ?? ""}
+                onchange={(e) => setPresetOutbound(preset.id, e.currentTarget.value)}
+                disabled={store.busy}
+                title="Через какой канал идёт набор"
+              >
+                <option value="">по умолчанию</option>
+                {#each config.outbounds as o (o.id)}<option value={o.id}>{o.name}</option>{/each}
+              </select>
+            {/if}
+            <button class="ghost small entries-btn" onclick={() => showPreset(preset.id)} title="Состав набора">
+              {preset.entries.length} зап.
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <div class="toolbar">
@@ -257,6 +294,7 @@
     <div class="check-result" class:proxy={checkResult.proxy}>{checkResult.text}</div>
   {/if}
 
+  <div class="table-wrap edit-table">
   <table>
     <thead>
       <tr>
@@ -275,12 +313,13 @@
         <td>
           <input
             type="text"
-            placeholder="Новый домен, маска или подсеть"
+            placeholder="Домен, маска или подсеть"
             bind:value={newPattern}
             class:invalid={!!newError}
             title={newError ?? ""}
             onkeydown={(e) => e.key === "Enter" && addRule()}
           />
+          {#if newError}<div class="row-error">{newError}</div>{/if}
         </td>
         <td>
           <select bind:value={newType}>
@@ -292,16 +331,18 @@
             {@render routeOptions()}
           </select>
         </td>
-        <td><input type="text" placeholder="Комментарий" bind:value={newComment} /></td>
-        <td colspan="2">
-          <button class="primary small" onclick={addRule} disabled={!newPattern.trim() || store.busy}>
-            Добавить
-          </button>
+        <td class="c-comment"><input type="text" placeholder="Комментарий" bind:value={newComment} /></td>
+        <td class="c-hits"></td>
+        <td>
+          <button
+            class="primary small add"
+            onclick={addRule}
+            disabled={!newPattern.trim() || store.busy}
+            title="Добавить правило"
+            aria-label="Добавить правило">+</button
+          >
         </td>
       </tr>
-      {#if newError}
-        <tr><td></td><td colspan="6" class="row-error">{newError}</td></tr>
-      {/if}
       {#each rules as rule (rule.id)}
         {@const stat = store.stats[rule.id]}
         <tr class:disabled={!rule.enabled}>
@@ -323,6 +364,7 @@
               onchange={(e) => commitPattern(rule, e.currentTarget.value)}
               onkeydown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             />
+            {#if rowErrors[rule.id]}<div class="row-error">{rowErrors[rule.id]}</div>{/if}
           </td>
           <td>
             <select
@@ -341,14 +383,14 @@
               {@render routeOptions()}
             </select>
           </td>
-          <td>
+          <td class="c-comment">
             <input
               type="text"
               value={rule.comment}
               onchange={(e) => patch(rule.id, { comment: e.currentTarget.value.trim() })}
             />
           </td>
-          <td class="hint">
+          <td class="hint c-hits ellipsis">
             {#if stat}{stat.hits} · {timeAgo(stat.lastMs)}{/if}
           </td>
           <td>
@@ -357,16 +399,13 @@
             </button>
           </td>
         </tr>
-        {#if rowErrors[rule.id]}
-          <tr><td></td><td colspan="6" class="row-error">{rowErrors[rule.id]}</td></tr>
-        {/if}
       {/each}
     </tbody>
   </table>
+  </div>
   {#if config.rules.length === 0}
     <p class="hint">
-      Своих правил пока нет. Отметьте набор выше, добавьте домен в строке над таблицей или вставьте
-      список.
+      Правил нет. Отметьте набор или добавьте домен.
     </p>
   {:else if rules.length === 0}
     <p class="hint">Ничего не найдено.</p>
@@ -378,9 +417,8 @@
     <div class="card dialog">
       <h2>Вставить списком</h2>
       <p class="hint">
-        По одному на строку: домены, адреса из браузера, маски (cdn-*.example.net) или подсети
-        (149.154.160.0/20). <code>*.example.com</code> означает домен вместе с поддоменами, после
-        <code>#</code> — комментарий. Повторы пропускаются.
+        По одному на строку: домен, ссылка, маска или подсеть. <code>*.example.com</code> — с поддоменами,
+        после <code>#</code> — комментарий.
       </p>
       <textarea rows="12" bind:value={pasteText} placeholder={"chatgpt.com\nhttps://claude.ai/new\n*.githubcopilot.com"}></textarea>
       <div class="toolbar">
@@ -388,6 +426,40 @@
         <button onclick={() => (pasteOpen = false)}>Отмена</button>
         <button class="primary" onclick={paste} disabled={!pasteText.trim() || store.busy}>Добавить</button>
       </div>
+    </div>
+  </div>
+{/if}
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key !== "Escape") return;
+    shownPresetId = null;
+    pasteOpen = false;
+  }}
+/>
+
+{#if shownPreset}
+  <div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (shownPresetId = null)}>
+    <div class="card dialog wide preset-dialog">
+      <div class="toolbar">
+        <h2>{shownPreset.name}</h2>
+        <span class="hint">{shownPreset.entries.length} зап.</span>
+        <span class="spacer"></span>
+        <input type="search" placeholder="Поиск в наборе" bind:value={entryFilter} />
+        <button class="ghost small" onclick={() => (shownPresetId = null)} aria-label="Закрыть">✕</button>
+      </div>
+      {#if shownPreset.note}<p class="hint note">{shownPreset.note}</p>{/if}
+      <ul class="entries">
+        {#each shownEntries as e (e.id)}
+          {@const hits = store.stats[e.id]?.hits}
+          <li>
+            <span class="mono ellipsis" title={e.pattern}>{e.pattern}</span>
+            {#if hits}<span class="pill proxy">{hits}</span>{/if}
+          </li>
+        {:else}
+          <li class="hint">Ничего не найдено.</li>
+        {/each}
+      </ul>
     </div>
   </div>
 {/if}
@@ -403,19 +475,37 @@
     font-size: 14px;
     font-weight: 600;
   }
+  .fold {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px;
+  }
+  .chev {
+    display: inline-block;
+    transition: transform 0.15s;
+    color: var(--text-secondary);
+  }
+  .chev.open {
+    transform: rotate(90deg);
+  }
+  .selected-names {
+    flex: 1;
+    min-width: 0;
+  }
   .preset-list {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    align-items: start;
-    gap: 6px 12px;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 6px 10px;
     margin-top: 8px;
   }
   .preset {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
+    min-width: 0;
+    height: 36px;
+    padding: 0 4px 0 8px;
     border-radius: 6px;
     border: 1px solid var(--border);
   }
@@ -435,21 +525,44 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .note {
-    flex-basis: 100%;
-    font-size: 12.5px;
+  .preset-outbound {
+    width: 110px;
+    height: 24px;
+    padding: 0 4px;
+    font-size: 12px;
+  }
+  .entries-btn {
     color: var(--text-secondary);
   }
-  .note p {
-    margin: 4px 0;
+  .preset-dialog {
+    height: min(640px, calc(100vh - 48px));
+    overflow: hidden;
+  }
+  .entries {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    align-content: start;
+    gap: 0 16px;
+  }
+  .entries li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 0;
     -webkit-user-select: text;
     user-select: text;
   }
-  .search {
-    width: 220px;
-  }
-  .check {
-    width: 260px;
+  .note {
+    margin: 0;
+    -webkit-user-select: text;
+    user-select: text;
   }
   .check-result {
     padding: 6px 10px;
@@ -461,74 +574,22 @@
     background: var(--accent-bg);
     color: var(--accent);
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
-  th {
-    text-align: left;
-    font-weight: 500;
-    font-size: 12.5px;
-    color: var(--text-secondary);
-    padding: 6px;
-    border-bottom: 1px solid var(--border);
-  }
-  td {
-    padding: 3px 6px;
-    border-bottom: 1px solid var(--border);
-  }
-  tbody tr:last-child td {
-    border-bottom: none;
-  }
-  td input[type="text"],
-  td select {
-    width: 100%;
-    height: 28px;
-  }
-  td input[type="text"]:not(:focus):not(.invalid),
-  td select:not(:focus) {
-    border-color: transparent;
-    background: transparent;
-  }
-  tr:hover td input[type="text"]:not(:focus):not(.invalid),
-  tr:hover td select:not(:focus) {
-    border-color: var(--border);
-  }
-  .new-row td {
-    background: var(--surface-alt);
-  }
-  .new-row input[type="text"],
-  .new-row select {
-    border-color: var(--border-strong) !important;
-    background: var(--surface) !important;
-  }
-  tr.disabled td {
-    opacity: 0.5;
-  }
   select.direct {
     color: var(--warning-text);
-  }
-  .row-error {
-    color: var(--danger-text);
-    font-size: 12.5px;
   }
   .c-on {
     width: 34px;
   }
   .c-type {
-    width: 185px;
-  }
-  .c-action {
     width: 200px;
   }
-  .preset-outbound {
-    max-width: 130px;
-    height: 24px;
-    font-size: 12px;
+  .add {
+    width: 28px;
+    padding: 0;
+    font-size: 16px;
+  }
+  .c-action {
+    width: 190px;
   }
   .c-comment {
     width: 22%;
@@ -538,5 +599,28 @@
   }
   .c-del {
     width: 40px;
+  }
+  /* Narrow window: comment and hit counts give way to the pattern. */
+  @container (max-width: 1080px) {
+    .c-comment,
+    .c-hits {
+      display: none;
+    }
+  }
+  @container (max-width: 640px) {
+    .preset-list {
+      grid-template-columns: 1fr;
+    }
+  }
+  @container (max-width: 620px) {
+    .c-type {
+      width: 120px;
+    }
+    .c-action {
+      width: 130px;
+    }
+    .revision {
+      display: none;
+    }
   }
 </style>

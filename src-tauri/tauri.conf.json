@@ -15,8 +15,8 @@
         "title": "LocalProxy",
         "width": 980,
         "height": 700,
-        "minWidth": 760,
-        "minHeight": 500,
+        "minWidth": 600,
+        "minHeight": 440,
         "center": true,
         "visible": false
       }

@@ -55,7 +55,7 @@
       case "sstp":
         return `${o.server} · ${o.username}`;
       default:
-        return `${o.host}:${o.port}${o.username ? " · с логином" : ""}`;
+        return `${o.host}:${o.port}`;
     }
   }
 
@@ -158,14 +158,16 @@
     const presets = Object.entries(config.presetOutbounds ?? {}).filter(
       ([p, id]) => id === o.id && config.presets.includes(p),
     ).length;
-    return { rules, presets };
+    const ports = (config.forwards ?? []).filter((f) => f.outbound === o.id).length;
+    return { rules, presets, ports };
   }
 
   function usageText(o: Outbound) {
-    const { rules, presets } = usage(o);
+    const { rules, presets, ports } = usage(o);
     const parts = [];
     if (rules) parts.push(`правил: ${rules}`);
     if (presets) parts.push(`наборов: ${presets}`);
+    if (ports) parts.push(`портов: ${ports}`);
     return parts.join(", ");
   }
 
@@ -175,7 +177,7 @@
       c.outbounds = c.outbounds.filter((x) => x.id !== o.id);
       if (c.activeOutboundId === o.id) c.activeOutboundId = c.outbounds[0]?.id ?? null;
     });
-    if (moved && !store.error) store.say(`«${o.name}» удалён; ${moved} теперь идут через outbound по умолчанию`);
+    if (moved && !store.error) store.say(`«${o.name}» удалён, ${moved} → по умолчанию`);
   }
 
   async function test(o: Outbound) {
@@ -235,16 +237,15 @@
 <div class="stack">
   <div class="toolbar">
     <span class="hint">
-      Правила и наборы идут через outbound по умолчанию (отмечен кружком, выбирается и вверху окна) или
-      через свой, если он указан в правиле. Подключены одновременно все используемые.
+      Правила без своего канала идут через канал по умолчанию (●).
     </span>
     <span class="spacer"></span>
-    <button class="primary" onclick={startNew} disabled={!!draft}>Добавить outbound</button>
+    <button class="primary" onclick={startNew} disabled={!!draft}>Добавить канал</button>
   </div>
 
   {#if draft}
     <div class="card form">
-      <h3>{config.outbounds.some((o) => o.id === draft!.id) ? "Изменить outbound" : "Новый outbound"}</h3>
+      <h3>{config.outbounds.some((o) => o.id === draft!.id) ? "Изменить канал" : "Новый канал"}</h3>
       <div class="grid">
         <label>Название <input type="text" bind:value={draft.name} placeholder="Офис" /></label>
         <label>
@@ -257,11 +258,11 @@
           </select>
         </label>
         {#if draft.type === "sstp"}
-          <label>Сервер <input type="text" bind:value={draft.server} placeholder="vpn.example.com или vpn.example.com:4443" /></label>
+          <label>Сервер <input type="text" bind:value={draft.server} placeholder="vpn.example.com[:порт]" /></label>
           <label>
             Сертификат сервера
             <select bind:value={draft.cert}>
-              <option value="system">проверять (доверенный в Windows)</option>
+              <option value="system">проверять</option>
               <option value="pin">доверять по отпечатку</option>
               <option value="none">не проверять</option>
             </select>
@@ -302,7 +303,7 @@
         </label>
         <div class="toolbar">
           <input type="file" accept=".conf,.txt" onchange={loadConf} />
-          <span class="hint">Подходит и обычный WireGuard, и AmneziaWG (все версии маскировки). Туннель поднимается внутри LocalProxy: без драйвера и прав администратора, через него идут только домены из правил.</span>
+          <span class="hint">WireGuard или AmneziaWG. Без драйвера и прав администратора.</span>
         </div>
       {/if}
       {#if draft.type === "sstp"}
@@ -313,14 +314,11 @@
           </label>
         {:else if draft.cert === "none"}
           <div class="hint">
-            Без проверки сертификата кто-то посередине может выдать себя за сервер и узнать хэш пароля.
-            Лучше доверять по отпечатку.
+            Без проверки сервер можно подменить. Надёжнее — по отпечатку.
           </div>
         {/if}
         <div class="hint">
-          Вход по MS-CHAPv2 или PAP; подходят Windows RRAS, MikroTik, SoftEther. Туннель поднимается внутри
-          LocalProxy, без драйвера и прав администратора. Для самоподписанного сертификата нажмите
-          «Проверить»: программа покажет его отпечаток и предложит ему доверять.
+          Windows RRAS, MikroTik, SoftEther. Самоподписанный сертификат: «Проверить» покажет отпечаток.
         </div>
       {/if}
       {#if draftError}<div class="err">{draftError}</div>{/if}
@@ -343,50 +341,52 @@
     {@const health = config.enabled ? store.health.outbounds[o.id] : undefined}
     {@const tunnel = tunnels.find((t) => t.outboundId === o.id)}
     <div class="card item" class:active>
-      <label class="radio">
-        <input
-          type="radio"
-          name="active-outbound"
-          title="Outbound по умолчанию: для правил и наборов без своего"
-          checked={active}
-          onchange={() => store.update((c) => (c.activeOutboundId = o.id))}
-        />
-        <span class="name">{o.name}</span>
-        {#if active}<span class="hint">по умолчанию</span>{/if}
-      </label>
-      <span class="pill">{typeLabel[o.type]}</span>
-      <span class="hint mono">{address(o)}</span>
-      {#if usageText(o)}<span class="hint" title="Правила и наборы с этим outbound">{usageText(o)}</span>{/if}
-      {#if health?.state === "up"}
-        <span class="pill ok">работает</span>
-      {:else if health?.state === "down"}
-        <span class="pill bad" title={health.reason}>недоступен</span>
-      {/if}
-      {#if tunnel}
-        {@const ago = tunnel.lastHandshake ? Math.round(Date.now() / 1000 - tunnel.lastHandshake) : null}
-        {@const fresh = ago !== null && ago < (o.type === "awg" ? 180 : 60)}
-        <span class="pill {fresh ? 'ok' : 'warn'}" title="Состояние туннеля">
-          {#if o.type === "awg"}
-            {ago === null ? "сервер пока не ответил" : `рукопожатие ${ago} с назад`}
-          {:else}
-            {fresh ? "подключено" : "нет связи с сервером, переподключение"}
-          {/if}
-          · ↓ {bytes(tunnel.rx)} ↑ {bytes(tunnel.tx)}
+      <div class="line">
+        <label class="radio">
+          <input
+            type="radio"
+            name="active-outbound"
+            title="Канал по умолчанию: для правил и наборов без своего"
+            checked={active}
+            onchange={() => store.update((c) => (c.activeOutboundId = o.id))}
+          />
+          <span class="name">{o.name}</span>
+        </label>
+        {#if active}<span class="hint nowrap">по умолчанию</span>{/if}
+        <span class="pill">{typeLabel[o.type]}</span>
+        <span class="hint mono address" title={address(o)}>{address(o)}</span>
+      </div>
+      <div class="line">
+        {#if health?.state === "up"}
+          <span class="pill ok">работает</span>
+        {:else if health?.state === "down"}
+          <span class="pill bad" title={health.reason}>недоступен</span>
+        {/if}
+        {#if tunnel}
+          {@const ago = tunnel.lastHandshake ? Math.round(Date.now() / 1000 - tunnel.lastHandshake) : null}
+          {@const fresh = ago !== null && ago < (o.type === "awg" ? 180 : 60)}
+          <span class="pill {fresh ? 'ok' : 'warn'}" title="Состояние туннеля">
+            {#if o.type === "awg"}
+              {ago === null ? "сервер пока не ответил" : `рукопожатие ${ago} с назад`}
+            {:else}
+              {fresh ? "подключено" : "нет связи, переподключение"}
+            {/if}
+            · ↓ {bytes(tunnel.rx)} ↑ {bytes(tunnel.tx)}
+          </span>
+        {/if}
+        {#if usageText(o)}<span class="hint nowrap" title="Правила, наборы и порты с этим каналом">{usageText(o)}</span>{/if}
+        {@render probeLine(o.id)}
+        <span class="actions">
+          <button class="small" onclick={() => test(o)} disabled={probes[o.id]?.busy}>Проверить</button>
+          <button class="small" onclick={() => edit(o)}>Изменить</button>
+          <button class="small danger" onclick={() => remove(o)}>Удалить</button>
         </span>
-      {/if}
-      <span class="spacer"></span>
-      {@render probeLine(o.id)}
-      <button class="small" onclick={() => test(o)} disabled={probes[o.id]?.busy}>
-        Проверить
-      </button>
-      <button class="small" onclick={() => edit(o)}>Изменить</button>
-      <button class="small danger" onclick={() => remove(o)}>Удалить</button>
+      </div>
     </div>
   {:else}
     {#if !draft}
       <p class="hint">
-        Outbound — это сервер, через который пойдут домены из правил: HTTP- или SOCKS5-прокси, VPN
-        WireGuard / AmneziaWG или SSTP. Добавьте хотя бы один.
+        Каналов нет. Добавьте HTTP, SOCKS5, WireGuard / AmneziaWG или SSTP.
       </p>
     {/if}
   {/each}
@@ -438,9 +438,33 @@
   }
   .item {
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .line {
+    display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
+    min-width: 0;
+  }
+  .line:first-child {
+    flex-wrap: nowrap;
+  }
+  .address {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nowrap {
+    white-space: nowrap;
+  }
+  .actions {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
   }
   .item.active {
     border-color: var(--accent);
@@ -458,5 +482,19 @@
   .err {
     color: var(--danger-text);
     font-size: 13px;
+  }
+  .radio {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+  .item .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @container (max-width: 620px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

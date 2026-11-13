@@ -14,9 +14,10 @@ use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use proxy_core::config::{
-    Config, MatchType, OnOutboundDown, Outbound, OutboundKind, ProxyEndpoint, Rule, RuleAction,
+    Config, MatchType, OnOutboundDown, Outbound, OutboundKind, PortForward, ProxyEndpoint, Rule,
+    RuleAction,
 };
-use proxy_core::{ProxyServer, RouteKind, ServerError};
+use proxy_core::{Inbound, ProxyServer, RouteKind, ServerError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
@@ -1080,4 +1081,112 @@ async fn each_rule_goes_through_its_own_outbound() {
     let row = |h: &str| traffic.iter().find(|r| r.host == h).unwrap();
     assert_eq!(row("a.test").outbound_id, Some(default.id));
     assert_eq!(row("b.test").outbound_id, Some(office.id));
+}
+
+async fn free_port() -> u16 {
+    let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    l.local_addr().unwrap().port()
+}
+
+async fn wait_forward(proxy: &ProxyServer, id: Uuid) -> proxy_core::ForwardState {
+    for _ in 0..100 {
+        if let Some(s) = proxy.forward_status().into_iter().find(|s| s.id == id)
+            && s.state != proxy_core::ForwardState::Starting
+        {
+            return s.state;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("forward did not start");
+}
+
+#[tokio::test]
+async fn port_forward_goes_through_its_outbound_only() {
+    let echo = echo_server().await;
+    let (office_port, office_seen) = fake_http_upstream(None).await;
+    let office = Outbound {
+        id: Uuid::new_v4(),
+        name: "office".into(),
+        kind: OutboundKind::Http(endpoint(office_port)),
+    };
+    let down = Outbound {
+        id: Uuid::new_v4(),
+        name: "down".into(),
+        kind: OutboundKind::Http(endpoint(dead_upstream().await)),
+    };
+    let local = free_port().await;
+    let mut forward = PortForward {
+        id: Uuid::new_v4(),
+        enabled: true,
+        local_port: local,
+        target_host: "mysql.office.lan".into(),
+        target_port: echo,
+        outbound: Some(office.id),
+        comment: String::new(),
+    };
+    let mut config = Config {
+        port: 0,
+        enabled: true,
+        outbounds: vec![office.clone(), down.clone()],
+        forwards: vec![forward.clone()],
+        on_outbound_down: OnOutboundDown::Direct,
+        ..Config::default()
+    };
+    let proxy = start(&config).await;
+    let mut events = proxy.subscribe();
+    assert_eq!(
+        wait_forward(&proxy, forward.id).await,
+        proxy_core::ForwardState::Listening
+    );
+
+    let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, local))
+        .await
+        .unwrap();
+    assert_echo(&mut s).await;
+    drop(s);
+    assert_eq!(
+        office_seen.lines(),
+        [format!("CONNECT mysql.office.lan:{echo} HTTP/1.1")],
+        "the name is resolved on the far side"
+    );
+    let event = events.recv().await.unwrap();
+    assert_eq!(
+        (event.inbound, event.route, event.outbound_id),
+        (Inbound::Forward, RouteKind::Proxy, Some(office.id))
+    );
+
+    // Retargeted to a dead outbound without reopening the port: closed,
+    // not sent direct even though the policy allows it for rules.
+    forward.outbound = Some(down.id);
+    config.forwards = vec![forward.clone()];
+    proxy.update(&config);
+    let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, local))
+        .await
+        .unwrap();
+    let mut buf = [0u8; 1];
+    let n = timeout(T, s.read(&mut buf)).await.unwrap().unwrap_or(0);
+    assert_eq!(n, 0, "closed");
+    assert_eq!(events.recv().await.unwrap().route, RouteKind::Blocked);
+
+    // A busy port is reported; switching the forward off closes the port.
+    let busy = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let taken = PortForward {
+        id: Uuid::new_v4(),
+        local_port: busy.local_addr().unwrap().port(),
+        ..forward.clone()
+    };
+    forward.enabled = false;
+    config.forwards = vec![forward.clone(), taken.clone()];
+    proxy.update(&config);
+    assert!(matches!(
+        wait_forward(&proxy, taken.id).await,
+        proxy_core::ForwardState::Failed { .. }
+    ));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        TcpStream::connect((Ipv4Addr::LOCALHOST, local))
+            .await
+            .is_err(),
+        "disabled forward stops listening"
+    );
 }

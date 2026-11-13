@@ -21,7 +21,7 @@ const EVENT_BUFFER: usize = 1024;
 /// An outbound that is LocalProxy itself would send matched traffic round
 /// in circles, each lap opening another connection.
 pub const SELF_LOOP: &str =
-    "outbound указывает на сам LocalProxy — получилась бы петля, укажите другой сервер";
+    "канал указывает на сам LocalProxy — получилась бы петля, укажите другой сервер";
 
 /// Everything routing needs, rebuilt on each config change and swapped atomically.
 #[derive(Debug)]
@@ -65,11 +65,11 @@ impl Snapshot {
     /// default one. The error is the reason it cannot be used.
     pub fn outbound_for(&self, decision: &Decision) -> (Option<Uuid>, Result<&Upstream, String>) {
         let Some(id) = decision.outbound.or(self.default_outbound) else {
-            return (None, Err("outbound не выбран".into()));
+            return (None, Err("канал не выбран".into()));
         };
         match self.upstreams.get(&id) {
             Some(upstream) => (Some(id), Ok(upstream)),
-            None => (Some(id), Err("outbound правила удалён".into())),
+            None => (Some(id), Err("канал правила удалён".into())),
         }
     }
 }
@@ -84,6 +84,8 @@ pub enum Inbound {
     Socks5,
     /// SOCKS5 UDP ASSOCIATE: one event per destination of an association.
     Udp,
+    /// A port forward.
+    Forward,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -125,10 +127,7 @@ impl fmt::Display for RouteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Blocked(reason) => {
-                write!(
-                    f,
-                    "заблокировано: {reason}; домен идёт только через outbound"
-                )
+                write!(f, "заблокировано: {reason}; домен идёт только через канал")
             }
             Self::Failed(e) => e.fmt(f),
         }
@@ -226,6 +225,29 @@ impl Router {
         self.route(target, Inbound::Http, true).await
     }
 
+    /// A TCP tunnel for a port forward: always through `outbound` (or the
+    /// default one), never direct, whatever the rules and the policy say.
+    pub async fn connect_forward(
+        &self,
+        target: &TargetAddr,
+        outbound: Option<Uuid>,
+    ) -> Result<BoxIo, RouteError> {
+        let decision = Decision {
+            action: RuleAction::Proxy,
+            rule_id: None,
+            outbound,
+        };
+        self.route_decided(
+            target,
+            Inbound::Forward,
+            false,
+            decision,
+            OnOutboundDown::Block,
+        )
+        .await
+        .map(|(io, _)| io)
+    }
+
     async fn route(
         &self,
         target: &TargetAddr,
@@ -234,6 +256,19 @@ impl Router {
     ) -> Result<(BoxIo, HttpHop), RouteError> {
         let snap = self.snapshot();
         let decision = snap.rules.decide(&target.host);
+        self.route_decided(target, inbound, plain_http, decision, snap.on_down)
+            .await
+    }
+
+    async fn route_decided(
+        &self,
+        target: &TargetAddr,
+        inbound: Inbound,
+        plain_http: bool,
+        decision: Decision,
+        on_down: OnOutboundDown,
+    ) -> Result<(BoxIo, HttpHop), RouteError> {
+        let snap = self.snapshot();
 
         let mut outbound_id = None;
         let result = match decision.action {
@@ -263,7 +298,7 @@ impl Router {
                 };
                 match attempt {
                     Ok(hop) => Ok((hop, RouteKind::Proxy)),
-                    Err(e) if e.is_outbound_down() => match snap.on_down {
+                    Err(e) if e.is_outbound_down() => match on_down {
                         OnOutboundDown::Block => Err(RouteError::Blocked(e.to_string())),
                         OnOutboundDown::Direct => {
                             tracing::warn!(%target, "{e}; going direct by policy");

@@ -52,6 +52,8 @@ html,
 body {
   margin: 0;
   height: 100%;
+  /* Only the content area scrolls, never the window itself. */
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
@@ -200,6 +202,94 @@ code,
   border-radius: 10px;
 }
 
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tables sit in a frame that scrolls sideways only when the table cannot
+   shrink any further; columns that matter less hide on narrow windows
+   (container queries in the tabs). */
+.table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.table-wrap table {
+  width: 100%;
+  min-width: 480px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.table-wrap th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table-wrap td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.table-wrap tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Editable tables: inputs look like plain text until hovered or focused. */
+.edit-table td input[type="text"],
+.edit-table td select {
+  width: 100%;
+  height: 28px;
+}
+
+.edit-table td input[type="text"]:not(:focus):not(.invalid),
+.edit-table td select:not(:focus) {
+  border-color: transparent;
+  background: transparent;
+}
+
+.edit-table tr:hover td input[type="text"]:not(:focus):not(.invalid),
+.edit-table tr:hover td select:not(:focus) {
+  border-color: var(--border);
+}
+
+.edit-table .new-row td {
+  background: var(--surface-alt);
+}
+
+.edit-table .new-row input[type="text"],
+.edit-table .new-row select {
+  border-color: var(--border-strong) !important;
+  background: var(--surface) !important;
+}
+
+.edit-table tr.disabled td {
+  opacity: 0.5;
+}
+
+.row-error {
+  color: var(--danger-text);
+  font-size: 12.5px;
+}
+
+/* Search boxes in toolbars shrink with the window. */
+.toolbar input[type="search"] {
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 280px;
+}
+
 /* Modal: overlay + centered card. */
 .overlay {
   position: fixed;
@@ -224,4 +314,8 @@ code,
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+}
+
+.dialog.wide {
+  width: min(900px, calc(100vw - 32px));
 }

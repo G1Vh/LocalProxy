@@ -98,8 +98,8 @@ fn tooltip(health: &Health) -> String {
     // Windows cuts tray tooltips at 127 characters.
     let text = match health {
         Health::Off => "LocalProxy — выключен".to_owned(),
-        Health::Up => "LocalProxy — включён, outbound работает".to_owned(),
-        Health::NoOutbound => "LocalProxy — outbound не выбран".to_owned(),
+        Health::Up => "LocalProxy — включён, каналы работают".to_owned(),
+        Health::NoOutbound => "LocalProxy — канал не выбран".to_owned(),
         Health::Down { reason } => format!("LocalProxy — недоступно: {reason}"),
     };
     text.chars().take(120).collect()

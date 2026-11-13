@@ -62,7 +62,7 @@
     />
   </label>
   <label class="row">
-    <span>Если outbound недоступен</span>
+    <span>Если канал недоступен</span>
     <select
       value={config.onOutboundDown}
       onchange={(e) =>
@@ -81,7 +81,7 @@
     />
     <span>
       Принимать SOCKS5 на том же порту
-      <span class="hint">— для программ, которые настраиваются вручную (Telegram, SSH)</span>
+      <span class="hint">— для ручной настройки (Telegram, SSH)</span>
     </span>
   </label>
   <label class="check">
@@ -92,8 +92,7 @@
       disabled={store.busy}
     />
     <span>
-      Уведомлять, когда outbound падает и восстанавливается
-      <span class="hint">— иконка в трее меняет цвет в любом случае</span>
+      Уведомлять о падении и восстановлении каналов
     </span>
   </label>
   <label class="check">
@@ -105,12 +104,12 @@
     />
     <span>
       HTTP_PROXY / HTTPS_PROXY для консольных программ
-      <span class="hint">— увидят только программы, запущенные после включения</span>
+      <span class="hint">— для запущенных после включения</span>
     </span>
   </label>
   <label class="check">
     <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
-    <span>Запускать при входе в Windows (свёрнутым в трей)</span>
+    <span>Запускать с Windows (в трее)</span>
   </label>
   <label class="check">
     <input
@@ -121,7 +120,7 @@
     />
     <span>
       Проверять обновления
-      <span class="hint">— при запуске и раз в 6 часов; устанавливаются только по кнопке</span>
+      <span class="hint">— раз в 6 часов, установка по кнопке</span>
     </span>
   </label>
   <div class="row updates">

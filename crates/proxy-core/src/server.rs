@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 
 use crate::config::Config;
+use crate::forward::{ForwardStatus, Forwards};
 use crate::router::{ConnEvent, Router};
 use crate::traffic::Traffic;
 use crate::{http_inbound, socks5_inbound};
@@ -35,6 +36,7 @@ pub enum ServerError {
 
 pub struct ProxyServer {
     router: Arc<Router>,
+    forwards: Forwards,
     port: u16,
     cancel: CancellationToken,
     tracker: TaskTracker,
@@ -109,8 +111,11 @@ impl ProxyServer {
             tracker.spawn(accept_loop(listener, ctx.clone()));
         }
         tracing::info!(port, "proxy listening");
+        let forwards = Forwards::new(router.clone(), tracker.clone(), cancel.clone());
+        forwards.update(&config.forwards);
         Ok(Self {
             router,
+            forwards,
             port,
             cancel,
             tracker,
@@ -125,9 +130,16 @@ impl ProxyServer {
         SocketAddr::from((Ipv4Addr::LOCALHOST, self.port))
     }
 
-    /// Applies new rules / outbound / policy to new connections. Port changes need a restart.
+    /// Applies new rules / outbounds / policy to new connections and opens
+    /// or closes forwarded ports. Changing the proxy port needs a restart.
     pub fn update(&self, config: &Config) {
         self.router.update(config);
+        self.forwards.update(&config.forwards);
+    }
+
+    /// State of each enabled port forward.
+    pub fn forward_status(&self) -> Vec<ForwardStatus> {
+        self.forwards.status()
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<ConnEvent> {

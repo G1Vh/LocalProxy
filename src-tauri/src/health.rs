@@ -264,12 +264,12 @@ fn notify(app: &AppHandle, state: &AppState, id: Uuid, previous: &Health, new: &
     let body = match (previous, new) {
         (Health::Up | Health::Off, Health::Down { reason }) => {
             let policy = match config.on_outbound_down {
-                OnOutboundDown::Block => "Его домены заблокированы, пока он не вернётся.",
-                OnOutboundDown::Direct => "Его домены пока идут напрямую.",
+                OnOutboundDown::Block => "Домены блокируются.",
+                OnOutboundDown::Direct => "Домены идут напрямую.",
             };
-            format!("Outbound «{name}» недоступен: {reason}\n{policy}")
+            format!("«{name}» недоступен: {reason}\n{policy}")
         }
-        (Health::Down { .. }, Health::Up) => format!("Outbound «{name}» снова работает."),
+        (Health::Down { .. }, Health::Up) => format!("«{name}» снова работает."),
         _ => return,
     };
     if let Err(e) = app
@@ -301,7 +301,7 @@ mod tests {
             route,
             rule_id: None,
             outbound_id: (route != RouteKind::Direct).then_some(outbound),
-            error: (route == RouteKind::Blocked).then(|| "outbound недоступен".into()),
+            error: (route == RouteKind::Blocked).then(|| "канал недоступен".into()),
         }
     }
 

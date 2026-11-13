@@ -5,6 +5,7 @@
 //! go through the active outbound, everything else goes direct.
 
 pub mod config;
+mod forward;
 mod http_inbound;
 pub mod matcher;
 pub mod outbound;
@@ -18,5 +19,6 @@ pub mod stream;
 pub mod traffic;
 
 pub use config::Config;
+pub use forward::{ForwardState, ForwardStatus};
 pub use router::{ConnEvent, Inbound, RouteKind};
 pub use server::{ProxyServer, ServerError};

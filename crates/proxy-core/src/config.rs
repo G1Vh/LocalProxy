@@ -34,6 +34,10 @@ pub struct Config {
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
+    /// Local ports passed through an outbound to a fixed address, for
+    /// programs that cannot use a proxy (database clients, RDP, SSH).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub forwards: Vec<PortForward>,
     /// Outbound per selected preset; a preset not listed uses the default.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub preset_outbounds: BTreeMap<String, Uuid>,
@@ -59,6 +63,7 @@ impl Default for Config {
             rules: Vec::new(),
             presets: Vec::new(),
             preset_outbounds: BTreeMap::new(),
+            forwards: Vec::new(),
         }
     }
 }
@@ -124,6 +129,23 @@ pub struct ProxyEndpoint {
     pub port: u16,
     pub username: String,
     pub password: String,
+}
+
+/// `127.0.0.1:local_port` leads to `target_host:target_port` through an outbound.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortForward {
+    pub id: Uuid,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub local_port: u16,
+    pub target_host: String,
+    pub target_port: u16,
+    /// `None` means the default outbound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound: Option<Uuid>,
+    #[serde(default)]
+    pub comment: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -267,16 +289,23 @@ impl Config {
         self.outbounds.iter().find(|o| o.id == id)
     }
 
-    /// Outbounds traffic can go to: the default one and those enabled proxy
-    /// rules name. Call it on the config with presets expanded.
+    /// Outbounds traffic can go to: the default one and those named by
+    /// enabled proxy rules and port forwards. Call it on the config with
+    /// presets expanded.
     pub fn used_outbounds(&self) -> Vec<&Outbound> {
         let mut ids: Vec<Uuid> = self.active_outbound().map(|o| o.id).into_iter().collect();
-        for rule in &self.rules {
-            if let Some(id) = rule.outbound
-                && rule.enabled
-                && rule.action == RuleAction::Proxy
-                && !ids.contains(&id)
-            {
+        let rules = self
+            .rules
+            .iter()
+            .filter(|r| r.enabled && r.action == RuleAction::Proxy)
+            .filter_map(|r| r.outbound);
+        let forwards = self
+            .forwards
+            .iter()
+            .filter(|f| f.enabled)
+            .filter_map(|f| f.outbound);
+        for id in rules.chain(forwards) {
+            if !ids.contains(&id) {
                 ids.push(id);
             }
         }
@@ -291,6 +320,12 @@ impl Config {
         for rule in &mut self.rules {
             if rule.outbound.is_some_and(|id| !known.contains(&id)) {
                 rule.outbound = None;
+                changed += 1;
+            }
+        }
+        for forward in &mut self.forwards {
+            if forward.outbound.is_some_and(|id| !known.contains(&id)) {
+                forward.outbound = None;
                 changed += 1;
             }
         }
