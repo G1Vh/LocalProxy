@@ -42,7 +42,8 @@ class Store {
     const unlisten = [
       api.onConfigChanged((c) => {
         this.config = c;
-        if (c.enabled) this.error = null;
+        // Switched on after a failed start: that start error is stale now.
+        if (c.enabled && this.error && this.error === this.info?.startError) this.error = null;
       }),
       api.onAppError((message) => (this.error = message)),
       api.onConnEvents((batch) => this.addEvents(batch)),
@@ -66,7 +67,7 @@ class Store {
       this.info = info;
       this.presets = presets;
       this.stats = stats;
-      if (!config.enabled && info.startError) this.error = info.startError;
+      if (info.startError) this.error = info.startError;
     } catch (e) {
       this.error = String(e);
     }

@@ -47,6 +47,8 @@ pub struct ProxyServer {
 #[derive(Clone)]
 pub(crate) struct ConnCtx {
     pub router: Arc<Router>,
+    /// Exe path of the program on the other end, if known.
+    pub process: Option<Arc<str>>,
     cancel: CancellationToken,
     tracker: TaskTracker,
 }
@@ -104,6 +106,7 @@ impl ProxyServer {
         let tracker = TaskTracker::new();
         let ctx = ConnCtx {
             router: router.clone(),
+            process: None,
             cancel: cancel.clone(),
             tracker: tracker.clone(),
         };
@@ -195,8 +198,9 @@ async fn accept_loop(listener: TcpListener, ctx: ConnCtx) {
     }
 }
 
-async fn handle(stream: TcpStream, ctx: ConnCtx) {
+async fn handle(stream: TcpStream, mut ctx: ConnCtx) {
     let _ = stream.set_nodelay(true);
+    ctx.process = crate::process::of_local_client(&stream);
     let mut first = [0u8; 1];
     match timeout(FIRST_BYTE_TIMEOUT, stream.peek(&mut first)).await {
         Ok(Ok(n)) if n > 0 => {}
@@ -204,7 +208,7 @@ async fn handle(stream: TcpStream, ctx: ConnCtx) {
     }
     if first[0] == 5 {
         if ctx.router.snapshot().socks5_enabled {
-            socks5_inbound::serve(stream, ctx.router).await;
+            socks5_inbound::serve(stream, ctx.router, ctx.process).await;
         }
     } else {
         http_inbound::serve(stream, ctx).await;

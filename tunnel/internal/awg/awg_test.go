@@ -1,9 +1,9 @@
 package awg
 
-// End-to-end: a "server" AmneziaWG node and the bridge as its client, both in
+// End-to-end: a "server" AmneziaWG node and the tunnel as its client, both in
 // this process, talking over loopback UDP. The server runs an HTTP server and
 // a UDP echo inside its own tunnel network; the test reaches them through the
-// bridge's SOCKS5, so every byte crosses a real obfuscated tunnel.
+// tunnel's SOCKS5, so every byte crosses a real obfuscated tunnel.
 
 import (
 	"crypto/rand"
@@ -159,24 +159,24 @@ func startClient(t *testing.T, conf string) *Tunnel {
 	if err != nil {
 		t.Fatalf("conf: %v\n%s", err, conf)
 	}
-	bridge, err := Start(cfg, coretest.User, coretest.Pass, "127.0.0.1:0")
+	tunnel, err := Start(cfg, coretest.User, coretest.Pass, "127.0.0.1:0", core.Bind{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(bridge.Close)
-	return bridge
+	t.Cleanup(tunnel.Close)
+	return tunnel
 }
 
-func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
+func TestCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 	log.SetOutput(io.Discard)
 	server, client := newKey(t), newKey(t)
 	hpKey := make([]byte, 32)
 	rand.Read(hpKey)
 	port := startServer(t, server, client, awgParams, hpKey)
-	bridge := startClient(t, clientConf(client, server, port, awgParams, hpKey))
+	tunnel := startClient(t, clientConf(client, server, port, awgParams, hpKey))
 
 	// TCP: HTTP GET to a server inside the tunnel.
-	c, code := coretest.SocksConnect(t, bridge.Port, serverIP, 80)
+	c, code := coretest.SocksConnect(t, tunnel.Port, serverIP, 80)
 	if code != 0 {
 		t.Fatalf("CONNECT failed with code %d", code)
 	}
@@ -188,7 +188,7 @@ func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 	}
 
 	// UDP ASSOCIATE: echo through the tunnel.
-	ctl, err := coretest.SocksHandshake(bridge.Port, "u", "secret")
+	ctl, err := coretest.SocksHandshake(tunnel.Port, "u", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 		t.Fatalf("bad UDP reply: host=%s port=%d payload=%q err=%v", host, sport, payload, err)
 	}
 
-	s, err := bridge.Status()
+	s, err := tunnel.Status()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,8 +232,8 @@ func TestPlainWireGuardWorksToo(t *testing.T) {
 	log.SetOutput(io.Discard)
 	server, client := newKey(t), newKey(t)
 	port := startServer(t, server, client, nil, nil)
-	bridge := startClient(t, clientConf(client, server, port, nil, nil))
-	c, code := coretest.SocksConnect(t, bridge.Port, serverIP, 80)
+	tunnel := startClient(t, clientConf(client, server, port, nil, nil))
+	c, code := coretest.SocksConnect(t, tunnel.Port, serverIP, 80)
 	defer c.Close()
 	if code != 0 {
 		t.Fatalf("CONNECT failed with code %d", code)
@@ -251,9 +251,9 @@ func TestMismatchedObfuscationDoesNotConnect(t *testing.T) {
 		wrong[k] = v
 	}
 	wrong["H1"] = "900000-900100"
-	bridge := startClient(t, clientConf(client, server, port, wrong, nil))
+	tunnel := startClient(t, clientConf(client, server, port, wrong, nil))
 
-	c, err := coretest.SocksHandshake(bridge.Port, "u", "secret")
+	c, err := coretest.SocksHandshake(tunnel.Port, "u", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,8 +272,8 @@ func TestWrongSocksPasswordIsRejected(t *testing.T) {
 	log.SetOutput(io.Discard)
 	server, client := newKey(t), newKey(t)
 	port := startServer(t, server, client, nil, nil)
-	bridge := startClient(t, clientConf(client, server, port, nil, nil))
-	if c, err := coretest.SocksHandshake(bridge.Port, "u", "wrong"); err == nil {
+	tunnel := startClient(t, clientConf(client, server, port, nil, nil))
+	if c, err := coretest.SocksHandshake(tunnel.Port, "u", "wrong"); err == nil {
 		c.Close()
 		t.Fatal("wrong password accepted")
 	}
@@ -294,9 +294,9 @@ func TestDeadServerClosesWithoutReply(t *testing.T) {
 	}
 	port := free.LocalAddr().(*net.UDPAddr).Port
 	free.Close() // nobody answers on this port
-	bridge := startClient(t, clientConf(client, server, port, nil, nil))
+	tunnel := startClient(t, clientConf(client, server, port, nil, nil))
 
-	c, err := coretest.SocksHandshake(bridge.Port, "u", "secret")
+	c, err := coretest.SocksHandshake(tunnel.Port, "u", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}

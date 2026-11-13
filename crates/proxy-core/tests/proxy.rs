@@ -1190,3 +1190,90 @@ async fn port_forward_goes_through_its_outbound_only() {
         "disabled forward stops listening"
     );
 }
+
+/// SOCKS5 with user "process": the TUN names the program behind the
+/// connection; a program rule then wins over the address.
+async fn socks5_connect_as(proxy: u16, process: &str, host: &str, port: u16) -> (u8, TcpStream) {
+    let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy))
+        .await
+        .unwrap();
+    s.write_all(&[5, 1, 2]).await.unwrap();
+    let mut r = [0u8; 2];
+    s.read_exact(&mut r).await.unwrap();
+    assert_eq!(r, [5, 2], "username/password accepted");
+    let mut auth = vec![1, 7];
+    auth.extend_from_slice(b"process");
+    auth.push(process.len() as u8);
+    auth.extend_from_slice(process.as_bytes());
+    s.write_all(&auth).await.unwrap();
+    s.read_exact(&mut r).await.unwrap();
+    assert_eq!(r, [1, 0]);
+    let mut req = vec![5, 1, 0, 3, host.len() as u8];
+    req.extend_from_slice(host.as_bytes());
+    req.extend_from_slice(&port.to_be_bytes());
+    s.write_all(&req).await.unwrap();
+    let mut reply = [0u8; 10];
+    timeout(T, s.read_exact(&mut reply)).await.unwrap().unwrap();
+    (reply[1], s)
+}
+
+#[tokio::test]
+async fn program_rule_routes_by_process() {
+    let echo = echo_server().await;
+    let (vpn_port, vpn_seen) = fake_http_upstream(None).await;
+    let vpn = Outbound {
+        id: Uuid::new_v4(),
+        name: "vpn".into(),
+        kind: OutboundKind::Http(endpoint(vpn_port)),
+    };
+    let discord = Rule {
+        match_type: MatchType::Process,
+        outbound: Some(vpn.id),
+        ..rule("discord.exe", RuleAction::Proxy)
+    };
+    let config = Config {
+        port: 0,
+        enabled: true,
+        socks5_enabled: true,
+        outbounds: vec![vpn.clone()],
+        rules: vec![discord],
+        ..Config::default()
+    };
+    let proxy = start(&config).await;
+    let mut events = proxy.subscribe();
+    let app = r"C:\Users\me\AppData\Local\Discord\Discord.exe";
+
+    let (code, mut s) = socks5_connect_as(proxy.port(), app, "localhost", echo).await;
+    assert_eq!(code, 0);
+    assert_echo(&mut s).await;
+    assert_eq!(
+        vpn_seen.lines(),
+        [format!("CONNECT localhost:{echo} HTTP/1.1")],
+        "through the program's channel"
+    );
+    let e = events.recv().await.unwrap();
+    assert_eq!(
+        (e.route, e.process.as_deref()),
+        (RouteKind::Proxy, Some(app))
+    );
+
+    // Another program to the same address goes by address rules (none: direct).
+    let (code, mut s) = socks5_connect_as(proxy.port(), r"C:\other.exe", "localhost", echo).await;
+    assert_eq!(code, 0);
+    assert_echo(&mut s).await;
+    assert_eq!(events.recv().await.unwrap().route, RouteKind::Direct);
+    assert_eq!(vpn_seen.lines().len(), 1);
+
+    // Without naming itself, the program is found by its socket: this test.
+    let (code, _s) = socks5_connect(proxy.port(), "localhost", echo).await;
+    assert_eq!(code, 0);
+    let e = events.recv().await.unwrap();
+    let me = std::env::current_exe().unwrap();
+    assert!(
+        e.process
+            .as_deref()
+            .is_some_and(|p| p.eq_ignore_ascii_case(&me.to_string_lossy())),
+        "{:?}",
+        e.process
+    );
+}

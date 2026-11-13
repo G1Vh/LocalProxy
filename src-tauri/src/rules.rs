@@ -18,8 +18,14 @@ pub struct MergeReport {
 /// Works out the rule type for one entry of a list:
 /// `149.154.160.0/20` is a subnet, `*.example.com` means "example.com and
 /// subdomains", a wildcard anywhere else makes a mask, the rest is
-/// "domain and subdomains". Returns the normalized pattern.
+/// "domain and subdomains", `discord.exe` or a path is a program. Returns the
+/// normalized pattern.
 pub fn classify(entry: &str) -> Option<(String, MatchType)> {
+    let lower = entry.to_lowercase();
+    if !lower.contains("://") && (lower.ends_with(".exe") || lower.contains('\\')) {
+        let pattern = normalize_pattern(entry, MatchType::Process).ok()?;
+        return Some((pattern, MatchType::Process));
+    }
     if parse_cidr(entry).is_ok() {
         let pattern = normalize_pattern(entry, MatchType::Cidr).ok()?;
         return Some((pattern, MatchType::Cidr));
@@ -180,6 +186,14 @@ mod tests {
             Some(("cdn-*.x.net".into(), MatchType::Mask))
         );
         assert_eq!(classify("bad host"), None);
+        assert_eq!(
+            classify("Discord.exe"),
+            Some(("discord.exe".into(), MatchType::Process))
+        );
+        assert_eq!(
+            classify(r"C:\Apps\Tool"),
+            Some((r"c:\apps\tool.exe".into(), MatchType::Process))
+        );
     }
 
     #[test]

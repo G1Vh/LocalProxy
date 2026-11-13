@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/G1Vh/LocalProxy/tunnel/internal/core"
 	"github.com/G1Vh/LocalProxy/tunnel/internal/packet"
 	"github.com/G1Vh/LocalProxy/tunnel/internal/ppp"
 )
@@ -40,6 +41,8 @@ type Options struct {
 	CertSHA256 string `json:"certSha256"`
 	// Skip certificate checks altogether.
 	Insecure bool `json:"insecure"`
+	// Pins the connection to the physical interface while the TUN is on.
+	Bind core.Bind `json:"-"`
 }
 
 const (
@@ -145,7 +148,7 @@ func Dial(ctx context.Context, opts Options, wantIP netip.Addr) (*packet.Session
 	if !ok {
 		deadline = time.Now().Add(20 * time.Second)
 	}
-	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+	raw, err := (&net.Dialer{Control: opts.Bind.Control}).DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return nil, fmt.Errorf("нет соединения с %s: %w", net.JoinHostPort(host, port), err)
 	}

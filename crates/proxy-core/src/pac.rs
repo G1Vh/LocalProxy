@@ -35,6 +35,8 @@ pub fn generate(rules: &RuleSet, port: u16, on_down: OnOutboundDown) -> String {
                     }
                     (IpAddr::V6(_), _) => return None,
                 },
+                // Browsers cannot tell programs apart; never in the PAC.
+                MatchType::Process => return None,
             };
             Some(format!("  {entry}"))
         })

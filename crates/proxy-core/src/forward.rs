@@ -197,7 +197,11 @@ async fn listen(
 async fn serve(mut client: TcpStream, forward: PortForward, router: Arc<Router>) {
     let _ = client.set_nodelay(true);
     let target = TargetAddr::new(forward.target_host.clone(), forward.target_port);
-    match router.connect_forward(&target, forward.outbound).await {
+    let process = crate::process::of_local_client(&client);
+    match router
+        .connect_forward(&target, forward.outbound, process.as_deref())
+        .await
+    {
         Ok(mut upstream) => {
             let _ = copy_bidirectional(&mut client, &mut upstream).await;
         }

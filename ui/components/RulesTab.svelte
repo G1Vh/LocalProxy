@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open, save } from "@tauri-apps/plugin-dialog";
   import * as api from "../lib/api";
-  import { ACTIONS, MATCH_TYPES } from "../lib/labels";
+  import { MATCH_TYPES } from "../lib/labels";
   import { newId, store, timeAgo } from "../lib/store.svelte";
   import type { MatchType, MergeReport, Rule } from "../lib/types";
 
@@ -218,7 +218,7 @@
   {#each config.outbounds.filter((o) => o.id !== config.activeOutboundId) as o (o.id)}
     <option value={"proxy:" + o.id}>через «{o.name}»</option>
   {/each}
-  {#each ACTIONS.filter((a) => a.value === "direct") as a}<option value={a.value}>{a.label}</option>{/each}
+  <option value="direct">напрямую</option>
 {/snippet}
 
 <div class="stack">
@@ -313,7 +313,7 @@
         <td>
           <input
             type="text"
-            placeholder="Домен, маска или подсеть"
+            placeholder="Домен, маска, подсеть или программа"
             bind:value={newPattern}
             class:invalid={!!newError}
             title={newError ?? ""}

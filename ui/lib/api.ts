@@ -15,6 +15,7 @@ import type {
   RuleStat,
   RulesChange,
   ForwardStatus,
+  TunInfo,
   TunnelStatus,
   UpdateInfo,
   UpdateProgress,
@@ -39,6 +40,7 @@ export const setPresetSelected = (id: string, selected: boolean) =>
   invoke<Config>("set_preset_selected", { id, selected });
 export const exportRules = (path: string) => invoke<number>("export_rules", { path });
 export const getBrowserWarnings = () => invoke<ProxyExtension[]>("get_browser_warnings");
+export const getTunStatus = () => invoke<TunInfo | null>("get_tun_status");
 export const getForwardStatus = () => invoke<ForwardStatus[]>("get_forward_status");
 export const getTunnelStatus = () => invoke<TunnelStatus[]>("get_tunnel_status");
 export const getHealth = () => invoke<HealthState>("get_health");

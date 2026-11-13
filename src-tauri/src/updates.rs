@@ -102,6 +102,10 @@ fn before_exit(app: &AppHandle) {
     if let Ok(mut tunnels) = state.tunnels.try_lock() {
         tunnels.clear();
     }
+    // The TUN process sees us exit and removes its adapter.
+    if let Ok(mut tun) = state.tun.try_lock() {
+        tun.take();
+    }
 }
 
 fn notify_once(app: &AppHandle, info: &UpdateInfo) {

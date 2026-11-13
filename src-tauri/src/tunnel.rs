@@ -75,6 +75,8 @@ pub struct TunnelProcess {
     /// What it was started for, to tell whether a restart is needed.
     pub outbound_id: Uuid,
     pub spec: TunnelSpec,
+    /// Interface pin (TUN mode) it was started with; a change restarts it.
+    pub bind: (u32, u32),
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,6 +147,8 @@ impl TunnelProcess {
         let mut request = serde_json::to_value(spec).map_err(|e| e.to_string())?;
         request["user"] = user.clone().into();
         request["pass"] = pass.clone().into();
+        let bind = proxy_core::bind::interface();
+        request["bind"] = serde_json::json!({ "v4": bind.0, "v6": bind.1 });
         stdin
             .write_all(format!("{request}\n").as_bytes())
             .await
@@ -173,6 +177,7 @@ impl TunnelProcess {
                     },
                     outbound_id,
                     spec: spec.clone(),
+                    bind,
                 })
             }
             _ => Err(format!("{label}: {}", event.message.unwrap_or(first))),

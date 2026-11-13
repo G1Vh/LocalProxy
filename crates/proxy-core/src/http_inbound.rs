@@ -75,7 +75,11 @@ async fn connect(req: Request<Incoming>, ctx: ConnCtx) -> Response<Body> {
         return text(StatusCode::BAD_REQUEST, "LocalProxy: CONNECT без адреса");
     };
 
-    let mut upstream = match ctx.router.connect(&target, Inbound::Connect).await {
+    let mut upstream = match ctx
+        .router
+        .connect(&target, Inbound::Connect, ctx.process.as_deref())
+        .await
+    {
         Ok(io) => io,
         Err(e) => return route_error(&e),
     };
@@ -116,7 +120,11 @@ async fn forward(mut req: Request<Incoming>, ctx: ConnCtx) -> Response<Body> {
     let wants_upgrade = is_upgrade(req.headers());
     let client_upgrade = wants_upgrade.then(|| hyper::upgrade::on(&mut req));
 
-    let (io, hop) = match ctx.router.connect_http(&target).await {
+    let (io, hop) = match ctx
+        .router
+        .connect_http(&target, ctx.process.as_deref())
+        .await
+    {
         Ok(v) => v,
         Err(e) => return route_error(&e),
     };

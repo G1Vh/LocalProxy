@@ -10,7 +10,7 @@ import (
 
 const bulkSize = 20 << 20
 
-// TestThroughputLoopback downloads 20 MB through the bridge with both tunnel
+// TestThroughputLoopback downloads 20 MB through the tunnel with both tunnel
 // ends on this machine: no network in the way, only our stack. Guards
 // against regressions that make the tunnel crawl.
 func TestThroughputLoopback(t *testing.T) {
@@ -20,9 +20,9 @@ func TestThroughputLoopback(t *testing.T) {
 	log.SetOutput(io.Discard)
 	server, client := newKey(t), newKey(t)
 	port := startServer(t, server, client, awgParams, nil)
-	bridge := startClient(t, clientConf(client, server, port, awgParams, nil))
+	tunnel := startClient(t, clientConf(client, server, port, awgParams, nil))
 
-	c, code := coretest.SocksConnect(t, bridge.Port, serverIP, 80)
+	c, code := coretest.SocksConnect(t, tunnel.Port, serverIP, 80)
 	if code != 0 {
 		t.Fatalf("CONNECT failed with code %d", code)
 	}

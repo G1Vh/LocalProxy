@@ -3,16 +3,21 @@
   import * as api from "../lib/api";
   import { ON_DOWN } from "../lib/labels";
   import { store } from "../lib/store.svelte";
-  import type { OnOutboundDown } from "../lib/types";
+  import type { OnOutboundDown, TunInfo } from "../lib/types";
 
   const config = $derived(store.config!);
   let portInput = $state(String(store.config?.port ?? ""));
   let autostart = $state(false);
   let checking = $state(false);
+  let tun = $state<TunInfo | null>(null);
   let checkResult = $state("");
 
   onMount(() => {
     api.getAutostart().then((a) => (autostart = a)).catch((e) => (store.error = String(e)));
+    const poll = () => api.getTunStatus().then((t) => (tun = t)).catch(() => (tun = null));
+    poll();
+    const timer = setInterval(poll, 3000);
+    return () => clearInterval(timer);
   });
 
   $effect(() => {
@@ -50,6 +55,42 @@
 </script>
 
 <div class="card settings">
+  <div class="mode">
+    <span>Режим</span>
+    <label class="check">
+      <input
+        type="radio"
+        name="mode"
+        checked={config.tunEnabled}
+        onchange={() => store.update((c) => (c.tunEnabled = true))}
+        disabled={store.busy}
+      />
+      <span>
+        Весь трафик (TUN)
+        <span class="hint">— все программы; права администратора один раз</span>
+        {#if config.tunEnabled && config.enabled && tun}
+          <span class="hint tun-state">
+            {tun.active
+              ? `работает · TCP ${tun.stats.tcp}, UDP ${tun.stats.udp}, DNS ${tun.stats.dns}`
+              : "запускается…"}
+          </span>
+        {/if}
+      </span>
+    </label>
+    <label class="check">
+      <input
+        type="radio"
+        name="mode"
+        checked={!config.tunEnabled}
+        onchange={() => store.update((c) => (c.tunEnabled = false))}
+        disabled={store.busy}
+      />
+      <span>
+        Системный прокси
+        <span class="hint">— без прав администратора; только программы, которые умеют прокси</span>
+      </span>
+    </label>
+  </div>
   <label class="row">
     <span>Порт</span>
     <input
@@ -152,5 +193,15 @@
   }
   .port {
     width: 90px;
+  }
+  .tun-state {
+    display: block;
+  }
+  .mode {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
   }
 </style>

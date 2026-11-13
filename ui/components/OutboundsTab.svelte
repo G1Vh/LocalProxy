@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as api from "../lib/api";
+  import { bytes } from "../lib/labels";
   import { newId, store } from "../lib/store.svelte";
   import { onMount } from "svelte";
   import type { Outbound, Probe, TunnelStatus } from "../lib/types";
@@ -35,11 +36,6 @@
     return () => clearInterval(timer);
   });
 
-  function bytes(n: number) {
-    if (n < 1024) return `${n} Б`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} КБ`;
-    return `${(n / 1024 / 1024).toFixed(1)} МБ`;
-  }
 
   const typeLabel = {
     http: "HTTP-прокси",

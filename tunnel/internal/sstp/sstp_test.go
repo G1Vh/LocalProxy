@@ -2,7 +2,7 @@ package sstp
 
 // End-to-end SSTP: a fake SSTP server in this process (TLS, SSTP control
 // messages, PPP with MS-CHAPv2 or PAP, IPCP, and its own network stack with
-// an HTTP server and a UDP echo) and the bridge as its client. The server
+// an HTTP server and a UDP echo) and the tunnel as its client. The server
 // checks the crypto binding the way Windows RRAS does, independently of the
 // client code paths it can avoid.
 
@@ -553,7 +553,7 @@ func TestSstpReconnects(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for s.bound.Load() < 2 || !b.Connected() {
 		if time.Now().After(deadline) {
-			t.Fatal("bridge did not reconnect")
+			t.Fatal("tunnel did not reconnect")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

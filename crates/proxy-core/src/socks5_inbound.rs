@@ -1,4 +1,8 @@
-//! SOCKS5 inbound (RFC 1928), no authentication: CONNECT and UDP ASSOCIATE.
+//! SOCKS5 inbound (RFC 1928): CONNECT and UDP ASSOCIATE. No authentication;
+//! a username/password (RFC 1929) is accepted but not checked, except that
+//! the user "process" names the program behind the connection: LocalProxy's
+//! TUN mode sends the exe path that way, since its connections all come
+//! from the TUN service itself.
 
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -28,8 +32,11 @@ const REP_TTL_EXPIRED: u8 = 6;
 const REP_COMMAND_NOT_SUPPORTED: u8 = 7;
 const REP_ADDRESS_NOT_SUPPORTED: u8 = 8;
 
-pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
-    let (command, target) = match timeout(HANDSHAKE_TIMEOUT, handshake(&mut client)).await {
+/// Username that carries the program's exe path in the password.
+const PROCESS_USER: &[u8] = b"process";
+
+pub async fn serve(mut client: TcpStream, router: Arc<Router>, process: Option<Arc<str>>) {
+    let (command, target, named) = match timeout(HANDSHAKE_TIMEOUT, handshake(&mut client)).await {
         Ok(Ok(Some(request))) => request,
         Ok(Ok(None)) => return,
         Ok(Err(e)) => {
@@ -42,12 +49,16 @@ pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
         }
     };
 
+    let process = named.map(Arc::from).or(process);
     if command == CMD_UDP_ASSOCIATE {
         // The address in the request is only a hint about the client; ignored.
-        return socks5_udp::associate(client, router).await;
+        return socks5_udp::associate(client, router, process).await;
     }
 
-    match router.connect(&target, Inbound::Socks5).await {
+    match router
+        .connect(&target, Inbound::Socks5, process.as_deref())
+        .await
+    {
         Ok(mut upstream) => {
             if reply(&mut client, REP_SUCCEEDED).await.is_ok()
                 && let Err(e) = copy_bidirectional(&mut client, &mut upstream).await
@@ -71,9 +82,10 @@ pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
     }
 }
 
-/// Negotiates the method and reads the request.
-/// `Ok(None)` means the client was answered with an error and should be dropped.
-async fn handshake(client: &mut TcpStream) -> io::Result<Option<(u8, TargetAddr)>> {
+/// Negotiates the method and reads the request, with the program named by
+/// the client if it did. `Ok(None)` means the client was answered with an
+/// error and should be dropped.
+async fn handshake(client: &mut TcpStream) -> io::Result<Option<(u8, TargetAddr, Option<String>)>> {
     let mut head = [0u8; 2];
     client.read_exact(&mut head).await?;
     if head[0] != 5 {
@@ -81,11 +93,17 @@ async fn handshake(client: &mut TcpStream) -> io::Result<Option<(u8, TargetAddr)
     }
     let mut methods = vec![0u8; head[1] as usize];
     client.read_exact(&mut methods).await?;
-    if !methods.contains(&0) {
+    let mut named = None;
+    if methods.contains(&0) {
+        client.write_all(&[5, 0]).await?;
+    } else if methods.contains(&2) {
+        client.write_all(&[5, 2]).await?;
+        named = read_credentials(client).await?;
+        client.write_all(&[1, 0]).await?;
+    } else {
         client.write_all(&[5, 0xFF]).await?;
         return Ok(None);
     }
-    client.write_all(&[5, 0]).await?;
 
     let mut request = [0u8; 4];
     client.read_exact(&mut request).await?;
@@ -121,7 +139,18 @@ async fn handshake(client: &mut TcpStream) -> io::Result<Option<(u8, TargetAddr)
         reply(client, REP_COMMAND_NOT_SUPPORTED).await?;
         return Ok(None);
     }
-    Ok(Some((command, TargetAddr::new(host, port))))
+    Ok(Some((command, TargetAddr::new(host, port), named)))
+}
+
+/// RFC 1929 username/password; returns the program if the user is "process".
+async fn read_credentials(client: &mut TcpStream) -> io::Result<Option<String>> {
+    let _version = client.read_u8().await?;
+    let mut user = vec![0u8; client.read_u8().await? as usize];
+    client.read_exact(&mut user).await?;
+    let mut pass = vec![0u8; client.read_u8().await? as usize];
+    client.read_exact(&mut pass).await?;
+    Ok((user == PROCESS_USER && !pass.is_empty())
+        .then(|| String::from_utf8_lossy(&pass).into_owned()))
 }
 
 async fn reply(client: &mut TcpStream, code: u8) -> io::Result<()> {

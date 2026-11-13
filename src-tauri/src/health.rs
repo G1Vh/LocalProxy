@@ -119,6 +119,12 @@ async fn check(app: &AppHandle) -> HealthState {
     if !config.enabled {
         return HealthState::default();
     }
+    if config.tun_enabled && !tun_alive(&state).await {
+        // The service ended the session (crash, stopped by hand): start it
+        // again; if that fails, the TUN mode is switched off with a message.
+        tracing::warn!("tun session gone, restarting");
+        let _ = commands::apply_config(app, &state, config.clone()).await;
+    }
     let effective = crate::presets::effective(&config, &state.presets().file);
     let used: Vec<Outbound> = effective.used_outbounds().into_iter().cloned().collect();
     if used.is_empty() {
@@ -134,7 +140,7 @@ async fn check(app: &AppHandle) -> HealthState {
         .any(|o| o.kind.is_tunnel() && !tunnels.contains_key(&o.id));
     if missing {
         // Died, or never came up (no network yet at logon): try again.
-        commands::revive_tunnels(app, &state).await;
+        crate::runtime::revive_tunnels(app, &state).await;
         tunnels = running_tunnels(&state).await;
     }
 
@@ -174,6 +180,15 @@ async fn check(app: &AppHandle) -> HealthState {
         outbounds.insert(id, health);
     }
     HealthState::new(&config, outbounds)
+}
+
+async fn tun_alive(state: &AppState) -> bool {
+    state
+        .tun
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|t| t.is_alive())
 }
 
 /// SOCKS5 endpoints of the tunnel processes that are alive.
@@ -301,6 +316,7 @@ mod tests {
             route,
             rule_id: None,
             outbound_id: (route != RouteKind::Direct).then_some(outbound),
+            process: None,
             error: (route == RouteKind::Blocked).then(|| "канал недоступен".into()),
         }
     }

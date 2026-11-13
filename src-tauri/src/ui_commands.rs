@@ -102,6 +102,35 @@ pub struct TunnelInfo {
     status: TunnelStatus,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunInfo {
+    /// Routes taken: the system's traffic goes through LocalProxy.
+    active: bool,
+    /// Physical interface index our sockets are pinned to.
+    interface: u32,
+    stats: crate::tun::TunStats,
+}
+
+/// TUN mode state; `None` while it is off.
+#[tauri::command]
+pub async fn get_tun_status(state: State<'_, AppState>) -> Result<Option<TunInfo>, String> {
+    let mut slot = state.tun.lock().await;
+    let Some(session) = slot.as_mut() else {
+        return Ok(None);
+    };
+    let stats = if session.active {
+        session.stats().await.unwrap_or_default()
+    } else {
+        Default::default()
+    };
+    Ok(Some(TunInfo {
+        active: session.active,
+        interface: proxy_core::bind::interface().0,
+        stats,
+    }))
+}
+
 /// State of the enabled port forwards; empty while routing is off.
 #[tauri::command]
 pub async fn get_forward_status(

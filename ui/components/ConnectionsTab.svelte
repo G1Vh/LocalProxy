@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as api from "../lib/api";
-  import { ROUTES } from "../lib/labels";
+  import { programName, ROUTES } from "../lib/labels";
   import { store } from "../lib/store.svelte";
   import type { ConnEvent } from "../lib/types";
   import TrafficView from "./TrafficView.svelte";
@@ -15,7 +15,7 @@
     const q = filter.trim().toLowerCase();
     return store.events
       .filter((e) => !onlyNotable || e.route !== "direct")
-      .filter((e) => !q || e.host.includes(q))
+      .filter((e) => !q || e.host.includes(q) || !!e.process?.toLowerCase().includes(q))
       .slice(0, SHOWN);
   });
 
@@ -24,15 +24,12 @@
 
   const inbound = { http: "HTTP", connect: "HTTPS", socks5: "SOCKS5", udp: "UDP", forward: "порт" } as const;
 
-  async function addToRules(e: ConnEvent) {
-    const change = await store.run(() => api.addRuleLines(e.host));
+  /** Adds the host, or the program (by file name), as a proxy rule. */
+  async function addToRules(entry: string) {
+    const change = await store.run(() => api.addRuleLines(entry));
     if (!change) return;
     store.config = change.config;
-    store.say(
-      change.report.added
-        ? `${e.host} добавлен в правила`
-        : `${e.host} уже в правилах`,
-    );
+    store.say(change.report.added ? `${entry} добавлен в правила` : `${entry} уже в правилах`);
   }
 </script>
 
@@ -46,7 +43,7 @@
 {:else}
 <div class="stack">
   <div class="toolbar">
-    <input type="search" placeholder="Фильтр по адресу" bind:value={filter} />
+    <input type="search" placeholder="Фильтр по адресу или программе" bind:value={filter} />
     <label class="check"
       ><input type="checkbox" bind:checked={onlyNotable} /> без «напрямую»</label
     >
@@ -76,6 +73,19 @@
             </span>
           </td>
             <td class="c-in hint">{inbound[e.inbound]}</td>
+            <td class="c-proc" title={e.process ?? ""}>
+              {#if e.process}
+                {@const name = programName(e.process)}
+                <span class="proc">{name}</span>
+                {#if name.toLowerCase().endsWith(".exe")}
+                  <button
+                    class="small add-proc"
+                    onclick={() => addToRules(name)}
+                    title="Добавить программу в правила: весь её трафик пойдёт через канал"
+                  >+</button>
+                {/if}
+              {/if}
+            </td>
             <td class="c-host">
               <span class="mono">{e.host}:{e.port}</span>
               {#if store.ruleLabel(e.ruleId)}
@@ -85,7 +95,7 @@
             </td>
             <td class="c-act">
               {#if !e.ruleId && e.inbound !== "forward"}
-                <button class="small" onclick={() => addToRules(e)} title="Добавить в правила">
+                <button class="small" onclick={() => addToRules(e.host)} title="Добавить в правила">
                   + в правила
                 </button>
               {/if}
@@ -156,6 +166,23 @@
   .c-in {
     width: 70px;
   }
+  .c-proc {
+    width: 150px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .proc {
+    font-size: 12px;
+  }
+  .add-proc {
+    visibility: hidden;
+    margin-left: 4px;
+    padding: 0 6px;
+  }
+  tr:hover .add-proc {
+    visibility: visible;
+  }
   .c-act {
     width: 110px;
     text-align: right;
@@ -164,11 +191,19 @@
     .c-in {
       display: none;
     }
+    .c-proc {
+      width: 110px;
+    }
     .c-route {
       width: 150px;
     }
     .c-act {
       width: 96px;
+    }
+  }
+  @container (max-width: 520px) {
+    .c-proc {
+      display: none;
     }
   }
 </style>

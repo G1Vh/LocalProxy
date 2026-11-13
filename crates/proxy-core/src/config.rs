@@ -31,6 +31,10 @@ pub struct Config {
     pub notifications: bool,
     /// Look for a new version on GitHub at start and every few hours.
     pub check_updates: bool,
+    /// TUN mode (the default): the whole system's traffic goes through
+    /// LocalProxy via a virtual adapter. Off: system proxy (PAC) only, no
+    /// administrator rights needed.
+    pub tun_enabled: bool,
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
@@ -58,6 +62,7 @@ impl Default for Config {
             on_outbound_down: OnOutboundDown::Block,
             notifications: true,
             check_updates: true,
+            tun_enabled: true,
             active_outbound_id: None,
             outbounds: Vec::new(),
             rules: Vec::new(),
@@ -183,12 +188,17 @@ pub enum MatchType {
     /// IP network such as `149.154.160.0/20` or `2001:b28:f23d::/48`; matches
     /// connections made to an IP address (apps like Telegram Desktop do that).
     Cidr,
+    /// A program: `discord.exe` (file name, `*` and `?` allowed) or a full
+    /// path. Its whole traffic follows the rule, whatever the address; wins
+    /// over address rules. Known for every connection in TUN mode, and for
+    /// programs that use LocalProxy as their proxy.
+    Process,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RuleAction {
-    /// Route through the active outbound.
+    /// Through the rule's own channel, or the default one.
     #[default]
     Proxy,
     /// Exception: go direct even if a broader rule says proxy.

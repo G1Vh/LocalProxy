@@ -1,7 +1,7 @@
 // Mirrors the Rust types (serde camelCase).
 
 export type OnOutboundDown = "block" | "direct";
-export type MatchType = "exact" | "domainAndSubdomains" | "mask" | "cidr";
+export type MatchType = "exact" | "domainAndSubdomains" | "mask" | "cidr" | "process";
 export type RuleAction = "proxy" | "direct";
 
 export interface ProxyEndpoint {
@@ -49,6 +49,8 @@ export interface Config {
   onOutboundDown: OnOutboundDown;
   notifications: boolean;
   checkUpdates: boolean;
+  /** Whole system's traffic through a TUN adapter (needs admin rights). */
+  tunEnabled: boolean;
   /** The default outbound: for proxy rules without one of their own. */
   activeOutboundId: string | null;
   outbounds: Outbound[];
@@ -81,6 +83,8 @@ export interface ConnEvent {
   ruleId: string | null;
   /** The outbound a proxy rule sent it to (or tried to). */
   outboundId: string | null;
+  /** Exe path of the program that made the connection, if known. */
+  process: string | null;
   error: string | null;
 }
 
@@ -165,6 +169,12 @@ export type ForwardStatus = { id: string; connections: number } & (
   | { state: "listening" }
   | { state: "failed"; reason: string }
 );
+
+export interface TunInfo {
+  active: boolean;
+  interface: number;
+  stats: { tcp: number; udp: number; dns: number; refused: number };
+}
 
 export interface HealthState {
   overall: Health;

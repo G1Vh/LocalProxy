@@ -63,6 +63,8 @@ pub(crate) struct Compiled {
 #[derive(Debug, Clone, Default)]
 pub struct RuleSet {
     rules: Vec<Compiled>,
+    /// Program rules, checked before address rules.
+    processes: Vec<Compiled>,
 }
 
 impl RuleSet {
@@ -98,7 +100,21 @@ impl RuleSet {
             })
             .collect();
         rules.sort_by(|a, b| precedence(b, a));
-        Self { rules }
+        // A full path beats a file name, which beats a mask.
+        let (mut processes, rules): (Vec<_>, Vec<_>) = rules
+            .into_iter()
+            .partition(|r| r.match_type == MatchType::Process);
+        processes.sort_by_key(|r| {
+            let rank = if r.pattern.contains('\\') {
+                0
+            } else if r.pattern.contains(['*', '?']) {
+                2
+            } else {
+                1
+            };
+            (rank, usize::MAX - r.literal_len)
+        });
+        Self { rules, processes }
     }
 
     pub fn len(&self) -> usize {
@@ -112,6 +128,30 @@ impl RuleSet {
     /// Rules in precedence order, strongest first.
     pub(crate) fn entries(&self) -> &[Compiled] {
         &self.rules
+    }
+
+    /// Decision for a connection to `host` by the program at `process` (its
+    /// exe path, if known): a program rule wins, then address rules.
+    pub fn decide_for(&self, host: &str, process: Option<&str>) -> Decision {
+        if let Some(path) = process {
+            let path = path.to_lowercase();
+            let name = path.rsplit('\\').next().unwrap_or(&path);
+            if let Some(r) = self.processes.iter().find(|r| {
+                let text = if r.pattern.contains('\\') {
+                    &path
+                } else {
+                    name
+                };
+                glob(r.pattern.as_bytes(), text.as_bytes())
+            }) {
+                return Decision {
+                    action: r.action,
+                    rule_id: Some(r.id),
+                    outbound: r.outbound,
+                };
+            }
+        }
+        self.decide(host)
     }
 
     pub fn decide(&self, host: &str) -> Decision {
@@ -132,7 +172,7 @@ fn precedence(a: &Compiled, b: &Compiled) -> Ordering {
         match t {
             MatchType::Exact => 2,
             MatchType::DomainAndSubdomains => 1,
-            MatchType::Mask | MatchType::Cidr => 0,
+            MatchType::Mask | MatchType::Cidr | MatchType::Process => 0,
         }
     }
     fn action_rank(a: RuleAction) -> u8 {
@@ -162,6 +202,7 @@ fn matches(rule: &Compiled, host: &str) -> bool {
             (Ok(addr), Some((net, prefix))) => in_network(addr, net, prefix),
             _ => false,
         },
+        MatchType::Process => false,
     }
 }
 
@@ -240,6 +281,9 @@ pub fn normalize_host(host: &str) -> String {
 /// `example.com`; `*.example.com` and `.example.com` are accepted for
 /// domain-and-subdomains and mean the same as `example.com`.
 pub fn normalize_pattern(input: &str, match_type: MatchType) -> Result<String, PatternError> {
+    if match_type == MatchType::Process {
+        return normalize_process(input);
+    }
     if match_type == MatchType::Cidr {
         let (network, prefix) = parse_cidr(input)?;
         return Ok(format!("{network}/{prefix}"));
@@ -287,6 +331,32 @@ pub fn normalize_pattern(input: &str, match_type: MatchType) -> Result<String, P
         |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '*' | '?');
     if !s.chars().all(allowed) {
         return Err(PatternError::InvalidCharacters);
+    }
+    Ok(s)
+}
+
+/// A program: lowercase, backslashes, `.exe` added to a bare name.
+fn normalize_process(input: &str) -> Result<String, PatternError> {
+    let s = input
+        .trim()
+        .trim_matches('"')
+        .trim()
+        .replace('/', "\\")
+        .to_lowercase();
+    if s.is_empty() {
+        return Err(PatternError::Empty);
+    }
+    if s.chars()
+        .any(|c| c.is_control() || matches!(c, '<' | '>' | '|' | '"'))
+    {
+        return Err(PatternError::InvalidCharacters);
+    }
+    let name = s.rsplit('\\').next().unwrap_or(&s);
+    if name.is_empty() {
+        return Err(PatternError::Empty);
+    }
+    if !name.contains(['.', '*', '?']) {
+        return Ok(format!("{s}.exe"));
     }
     Ok(s)
 }
@@ -509,5 +579,65 @@ mod tests {
         assert!(!glob(b"a*b*c", b"aXXbYY"));
         assert!(glob(b"**.x", b"a.x"));
         assert!(!glob(b"", b"a"));
+    }
+
+    #[test]
+    fn program_rules_win_over_addresses() {
+        let rule = |pattern: &str, match_type: MatchType, action: RuleAction| Rule {
+            id: Uuid::new_v4(),
+            enabled: true,
+            pattern: normalize_pattern(pattern, match_type).unwrap(),
+            match_type,
+            action,
+            comment: String::new(),
+            outbound: None,
+        };
+        let discord = rule("Discord", MatchType::Process, RuleAction::Proxy);
+        let steam = rule("steam*.exe", MatchType::Process, RuleAction::Direct);
+        let full = rule(
+            r"C:\Games\Steam\steam.exe",
+            MatchType::Process,
+            RuleAction::Proxy,
+        );
+        let domain = rule(
+            "discord.com",
+            MatchType::DomainAndSubdomains,
+            RuleAction::Direct,
+        );
+        let set = RuleSet::new(&[discord.clone(), steam.clone(), full.clone(), domain.clone()]);
+
+        let app = r"C:\Users\me\AppData\Local\Discord\app-1.0\Discord.exe";
+        assert_eq!(
+            set.decide_for("discord.com", Some(app)).rule_id,
+            Some(discord.id),
+            "program beats address"
+        );
+        assert_eq!(
+            set.decide_for("discord.com", None).rule_id,
+            Some(domain.id),
+            "unknown program: address rules"
+        );
+        assert_eq!(
+            set.decide_for("x.com", Some(r"D:\steamwebhelper.exe"))
+                .rule_id,
+            Some(steam.id),
+            "mask"
+        );
+        assert_eq!(
+            set.decide_for("x.com", Some(r"C:\Games\Steam\steam.exe"))
+                .rule_id,
+            Some(full.id),
+            "a full path beats a mask"
+        );
+        assert_eq!(set.decide_for("x.com", Some(r"C:\other.exe")).rule_id, None);
+        assert_eq!(
+            normalize_pattern(" Discord ", MatchType::Process).unwrap(),
+            "discord.exe"
+        );
+        assert_eq!(
+            normalize_pattern("C:/Apps/Tool.EXE", MatchType::Process).unwrap(),
+            r"c:\apps\tool.exe"
+        );
+        assert!(normalize_pattern("bad|name", MatchType::Process).is_err());
     }
 }

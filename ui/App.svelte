@@ -20,6 +20,10 @@
   const config = $derived(store.config);
   const active = $derived(config?.outbounds.find((o) => o.id === config.activeOutboundId));
   const presetCount = $derived(config?.presets.length ?? 0);
+  // Port forwards are for proxy mode: in TUN every program reaches servers itself.
+  $effect(() => {
+    if (config?.tunEnabled && tab === "ports") tab = "rules";
+  });
   const downCount = $derived(
     Object.values(store.health.outbounds).filter((h) => h.state === "down").length,
   );
@@ -49,6 +53,7 @@
     <span class="title">LocalProxy</span>
     {#if config}
       {@const h = store.health.overall}
+      {@const mode = config.tunEnabled ? "TUN" : "Прокси"}
       <span
         class="pill status"
         class:ok={config.enabled && h.state === "up"}
@@ -58,15 +63,13 @@
         {#if !config.enabled}
           Выключен
         {:else if h.state === "up"}
-          Включён · {Object.keys(store.health.outbounds).length > 1
-            ? "каналы работают"
-            : "канал работает"}
+          {mode} · {Object.keys(store.health.outbounds).length > 1 ? "каналы работают" : "канал работает"}
         {:else if h.state === "down"}
-          Включён · {downCount > 1 ? `недоступно каналов: ${downCount}` : "канал недоступен"}
+          {mode} · {downCount > 1 ? `недоступно каналов: ${downCount}` : "канал недоступен"}
         {:else if h.state === "noOutbound"}
-          Включён · канал не выбран
+          {mode} · канал не выбран
         {:else}
-          Включён · 127.0.0.1:{config.port}
+          {mode} · 127.0.0.1:{config.port}
         {/if}
       </span>
       <div class="controls">
@@ -102,12 +105,17 @@
     <div class="banner warning">{warning}</div>
   {/each}
   {#if store.browserWarnings.length}
-    <div class="banner warning">
+    {@const tun = config?.tunEnabled}
+    <div class="banner {tun ? 'info' : 'warning'}">
       <span>
         {#each store.browserWarnings as w, i}
           {i ? "; " : ""}{w.browser} ({w.profile}): «{w.extension}»
         {/each}
-        — расширение перехватывает прокси, правила LocalProxy в этом браузере не действуют.
+        {#if tun}
+          — ведёт часть сайтов через свой прокси, для этих сайтов правила LocalProxy не действуют.
+        {:else}
+          — расширение перехватывает прокси, правила LocalProxy в этом браузере не действуют.
+        {/if}
       </span>
     </div>
   {/if}
@@ -149,9 +157,11 @@
     <button class:active={tab === "rules"} onclick={() => (tab = "rules")}>
       Правила <span class="count" title="правил + наборов">{config?.rules.length ?? 0} + {presetCount}</span>
     </button>
-    <button class:active={tab === "ports"} onclick={() => (tab = "ports")}>
-      Порты {#if config?.forwards?.length}<span class="count">{config.forwards.length}</span>{/if}
-    </button>
+    {#if !config?.tunEnabled}
+      <button class:active={tab === "ports"} onclick={() => (tab = "ports")}>
+        Порты {#if config?.forwards?.length}<span class="count">{config.forwards.length}</span>{/if}
+      </button>
+    {/if}
     <button class:active={tab === "connections"} onclick={() => (tab = "connections")}>
       Подключения
     </button>
@@ -274,6 +284,10 @@
   .banner.error {
     border: 1px solid var(--danger-text);
     color: var(--danger-text);
+  }
+  .banner.info {
+    background: var(--surface-alt);
+    color: var(--text-secondary);
   }
   .banner.notice {
     background: var(--success-bg);

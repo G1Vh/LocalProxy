@@ -7,9 +7,11 @@ mod events;
 mod health;
 mod presets;
 mod rules;
+mod runtime;
 mod state;
 mod system;
 mod tray;
+mod tun;
 mod tunnel;
 mod ui_commands;
 mod updates;
@@ -95,6 +97,7 @@ fn main() {
             ui_commands::get_browser_warnings,
             ui_commands::get_tunnel_status,
             ui_commands::get_forward_status,
+            ui_commands::get_tun_status,
             ui_commands::get_traffic,
             ui_commands::reset_traffic,
             health::get_health,
@@ -110,6 +113,10 @@ fn main() {
             // Leave Windows as we found it; `enabled` stays in the config so the
             // next start switches routing back on.
             let state = app.state::<state::AppState>();
+            // The adapter goes first, so nothing is left routed into it.
+            if let Some(tun) = tauri::async_runtime::block_on(state.tun.lock()).take() {
+                tauri::async_runtime::block_on(tun.stop());
+            }
             if let Err(e) = state.system.restore() {
                 tracing::error!("cannot restore system proxy on exit: {e:#}");
             }
@@ -121,19 +128,17 @@ fn main() {
 /// run died with Windows pointed at our PAC, the backup puts it back.
 fn sync_at_startup(app: &tauri::AppHandle, state: &state::AppState) {
     let mut config = state.config().clone();
-    let was_enabled = config.enabled;
-    let Some(error) =
-        tauri::async_runtime::block_on(commands::sync_runtime(app, state, &mut config))
-    else {
-        return;
-    };
-    if was_enabled != config.enabled {
+    let error = tauri::async_runtime::block_on(runtime::sync_runtime(app, state, &mut config));
+    // Routing or the TUN mode may have been switched off by a failed start.
+    if config != *state.config() {
         if let Err(e) = config.save(&state.config_path) {
             tracing::error!("cannot save config: {e}");
         }
         *state.config() = config;
     }
-    state.set_start_error(Some(error));
+    if error.is_some() {
+        state.set_start_error(error);
+    }
 }
 
 fn restore_system_and_exit() -> ! {

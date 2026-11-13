@@ -30,6 +30,8 @@ pub struct AppState {
     pub proxy: tokio::sync::Mutex<Option<ProxyServer>>,
     /// Windows proxy settings and environment variables.
     pub system: SystemProxy,
+    /// TUN mode session, while it runs.
+    pub tun: tokio::sync::Mutex<Option<crate::tun::TunSession>>,
     /// Tunnel processes by outbound id, for the tunnel outbounds in use.
     pub tunnels: tokio::sync::Mutex<HashMap<Uuid, crate::tunnel::TunnelProcess>>,
     /// Lasting problems found at startup (e.g. a broken config file).
@@ -74,6 +76,7 @@ impl AppState {
             config: Mutex::new(config),
             proxy: tokio::sync::Mutex::new(None),
             system: SystemProxy::new(&dir),
+            tun: tokio::sync::Mutex::default(),
             tunnels: tokio::sync::Mutex::default(),
             warnings,
             start_error: Mutex::new(None),

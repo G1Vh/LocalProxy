@@ -8,5 +8,10 @@
     ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --restore-system'
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "LocalProxy"
     DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" "LocalProxy"
+    ; The TUN service, if it was ever installed (asks for admin rights).
+    ReadRegStr $0 HKLM "SYSTEM\CurrentControlSet\Services\LocalProxyTun" "ImagePath"
+    ${If} $0 != ""
+      ExecShellWait "runas" "$INSTDIR\localproxy-tunnel.exe" "service uninstall" SW_HIDE
+    ${EndIf}
   ${EndIf}
 !macroend

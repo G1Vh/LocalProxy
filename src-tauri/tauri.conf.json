@@ -50,6 +50,9 @@
     "externalBin": [
       "binaries/localproxy-tunnel"
     ],
+    "resources": {
+      "wintun/wintun.dll": "wintun.dll"
+    },
     "createUpdaterArtifacts": true
   },
   "plugins": {

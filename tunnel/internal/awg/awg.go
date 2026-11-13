@@ -33,7 +33,8 @@ const handshakeFresh = 180 * time.Second
 
 // Start brings the tunnel up and starts the SOCKS5 server on listen
 // (use "127.0.0.1:0" for a free port).
-func Start(cfg *Config, user, pass, listen string) (*Tunnel, error) {
+// bind pins the tunnel's UDP socket to the physical interface (TUN mode).
+func Start(cfg *Config, user, pass, listen string, bind core.Bind) (*Tunnel, error) {
 	tunDev, tnet, err := netstack.CreateNetTUN(cfg.Addresses, cfg.DNS, cfg.MTU)
 	if err != nil {
 		return nil, fmt.Errorf("сетевой стек туннеля: %w", err)
@@ -57,6 +58,14 @@ func Start(cfg *Config, user, pass, listen string) (*Tunnel, error) {
 	if err := dev.Up(); err != nil {
 		dev.Close()
 		return nil, fmt.Errorf("туннель не поднялся: %w", err)
+	}
+	if b, ok := dev.Bind().(conn.BindSocketToInterface); ok && bind.Active() {
+		if err := b.BindSocketToInterface4(bind.V4, false); err != nil {
+			log.Printf("awg: привязка к интерфейсу: %v", err)
+		}
+		if bind.V6 != 0 {
+			b.BindSocketToInterface6(bind.V6, false)
+		}
 	}
 
 	l, err := net.Listen("tcp", listen)

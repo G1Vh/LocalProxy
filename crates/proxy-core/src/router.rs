@@ -113,6 +113,8 @@ pub struct ConnEvent {
     pub rule_id: Option<Uuid>,
     /// The outbound a proxy rule sent it to (or tried to).
     pub outbound_id: Option<Uuid>,
+    /// Exe path of the program that made the connection, if known.
+    pub process: Option<String>,
     pub error: Option<String>,
 }
 
@@ -187,6 +189,7 @@ impl Router {
         self.port
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn emit(
         &self,
         inbound: Inbound,
@@ -194,6 +197,7 @@ impl Router {
         route: RouteKind,
         rule_id: Option<Uuid>,
         outbound_id: Option<Uuid>,
+        process: Option<&str>,
         error: Option<String>,
     ) {
         // No subscribers is fine.
@@ -205,24 +209,32 @@ impl Router {
             route,
             rule_id,
             outbound_id,
+            process: process.map(str::to_owned),
             error,
         });
     }
 
-    /// A TCP tunnel to `target`.
+    /// A TCP tunnel to `target` for the program at `process` (exe path).
     pub async fn connect(
         &self,
         target: &TargetAddr,
         inbound: Inbound,
+        process: Option<&str>,
     ) -> Result<BoxIo, RouteError> {
-        self.route(target, inbound, false).await.map(|(io, _)| io)
+        self.route(target, inbound, false, process)
+            .await
+            .map(|(io, _)| io)
     }
 
     /// A stream for forwarding plain HTTP to `target`. Through an HTTP upstream
     /// this is a connection to the proxy itself, not a CONNECT tunnel: many
     /// proxies only allow CONNECT to port 443.
-    pub async fn connect_http(&self, target: &TargetAddr) -> Result<(BoxIo, HttpHop), RouteError> {
-        self.route(target, Inbound::Http, true).await
+    pub async fn connect_http(
+        &self,
+        target: &TargetAddr,
+        process: Option<&str>,
+    ) -> Result<(BoxIo, HttpHop), RouteError> {
+        self.route(target, Inbound::Http, true, process).await
     }
 
     /// A TCP tunnel for a port forward: always through `outbound` (or the
@@ -231,6 +243,7 @@ impl Router {
         &self,
         target: &TargetAddr,
         outbound: Option<Uuid>,
+        process: Option<&str>,
     ) -> Result<BoxIo, RouteError> {
         let decision = Decision {
             action: RuleAction::Proxy,
@@ -243,6 +256,7 @@ impl Router {
             false,
             decision,
             OnOutboundDown::Block,
+            process,
         )
         .await
         .map(|(io, _)| io)
@@ -253,10 +267,11 @@ impl Router {
         target: &TargetAddr,
         inbound: Inbound,
         plain_http: bool,
+        process: Option<&str>,
     ) -> Result<(BoxIo, HttpHop), RouteError> {
         let snap = self.snapshot();
-        let decision = snap.rules.decide(&target.host);
-        self.route_decided(target, inbound, plain_http, decision, snap.on_down)
+        let decision = snap.rules.decide_for(&target.host, process);
+        self.route_decided(target, inbound, plain_http, decision, snap.on_down, process)
             .await
     }
 
@@ -267,6 +282,7 @@ impl Router {
         plain_http: bool,
         decision: Decision,
         on_down: OnOutboundDown,
+        process: Option<&str>,
     ) -> Result<(BoxIo, HttpHop), RouteError> {
         let snap = self.snapshot();
 
@@ -316,7 +332,15 @@ impl Router {
             Err(e @ RouteError::Failed(_)) => (RouteKind::Failed, Some(e.to_string())),
         };
         tracing::debug!(%target, ?inbound, ?route, error = error.as_deref().unwrap_or(""), "route");
-        self.emit(inbound, target, route, decision.rule_id, outbound_id, error);
+        self.emit(
+            inbound,
+            target,
+            route,
+            decision.rule_id,
+            outbound_id,
+            process,
+            error,
+        );
 
         result.map(|((io, hop), route)| {
             let via = outbound_id.filter(|_| route == RouteKind::Proxy);

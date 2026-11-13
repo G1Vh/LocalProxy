@@ -3,7 +3,7 @@
 //! The client gets a relay socket on 127.0.0.1. Each datagram is routed like a
 //! TCP connection: unmatched destinations go direct, matched ones through the
 //! outbound, which must speak SOCKS5 (an upstream SOCKS5 proxy or the
-//! WireGuard/AmneziaWG bridge). An HTTP proxy cannot carry UDP. The
+//! WireGuard / SSTP tunnel). An HTTP proxy cannot carry UDP. The
 //! association lives as long as the client's TCP control connection.
 
 use std::collections::{HashMap, HashSet};
@@ -29,7 +29,11 @@ const MAX_DATAGRAM: usize = 65535;
 const MAX_SEEN: usize = 1024;
 
 /// Runs one association until the control connection closes.
-pub(crate) async fn associate(mut control: TcpStream, router: Arc<Router>) {
+pub(crate) async fn associate(
+    mut control: TcpStream,
+    router: Arc<Router>,
+    process: Option<Arc<str>>,
+) {
     let relay = match UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await {
         Ok(s) => s,
         Err(e) => {
@@ -50,6 +54,7 @@ pub(crate) async fn associate(mut control: TcpStream, router: Arc<Router>) {
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(256);
     let mut assoc = Association {
         router,
+        process,
         tx,
         tasks: JoinSet::new(),
         direct: [None, None],
@@ -96,6 +101,8 @@ struct UpstreamAssoc {
 
 struct Association {
     router: Arc<Router>,
+    /// Program behind the association (its control connection).
+    process: Option<Arc<str>>,
     /// Datagrams for the client, already wrapped in the SOCKS5 UDP header.
     tx: mpsc::Sender<Vec<u8>>,
     tasks: JoinSet<()>,
@@ -149,7 +156,7 @@ impl Association {
             return;
         };
         let snap = self.router.snapshot();
-        let decision = snap.rules.decide(&target.host);
+        let decision = snap.rules.decide_for(&target.host, self.process.as_deref());
         let mut outbound_id = None;
         let (path, route, error) = match decision.action {
             RuleAction::Direct => (Path::Direct, RouteKind::Direct, None),
@@ -181,6 +188,7 @@ impl Association {
                 route,
                 decision.rule_id,
                 outbound_id,
+                self.process.as_deref(),
                 error,
             );
         }
@@ -251,7 +259,11 @@ impl Association {
         } else {
             (Ipv6Addr::UNSPECIFIED, 0).into()
         };
-        let socket = Arc::new(UdpSocket::bind(any).await.map_err(|e| e.to_string())?);
+        let socket = UdpSocket::bind(any).await.map_err(|e| e.to_string())?;
+        if !relay.ip().is_loopback() {
+            crate::bind::pin_udp(&socket, relay.is_ipv6()).map_err(|e| e.to_string())?;
+        }
+        let socket = Arc::new(socket);
         let reader = socket.clone();
         let tx = self.tx.clone();
         let replies = self.replies.clone();
@@ -340,7 +352,9 @@ impl Association {
         } else {
             (Ipv4Addr::UNSPECIFIED, 0).into()
         };
-        let socket = Arc::new(UdpSocket::bind(any).await.ok()?);
+        let socket = UdpSocket::bind(any).await.ok()?;
+        crate::bind::pin_udp(&socket, v6).ok()?;
+        let socket = Arc::new(socket);
         let reader = socket.clone();
         let tx = self.tx.clone();
         let replies = self.replies.clone();

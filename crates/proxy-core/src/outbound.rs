@@ -56,15 +56,25 @@ pub async fn connect_direct(target: &TargetAddr) -> Result<TcpStream, ConnectErr
         target: target.to_string(),
         source,
     };
-    let stream = timeout(
-        CONNECT_TIMEOUT,
-        TcpStream::connect((target.host.as_str(), target.port)),
-    )
-    .await
-    .map_err(|_| err(io::ErrorKind::TimedOut.into()))?
-    .map_err(err)?;
+    let stream = timeout(CONNECT_TIMEOUT, connect_any(&target.host, target.port))
+        .await
+        .map_err(|_| err(io::ErrorKind::TimedOut.into()))?
+        .map_err(err)?;
     let _ = stream.set_nodelay(true);
     Ok(stream)
+}
+
+/// Tries the addresses of `host` in turn, like `TcpStream::connect`, with
+/// sockets pinned to the physical interface while the TUN is on.
+async fn connect_any(host: &str, port: u16) -> io::Result<TcpStream> {
+    let mut last = io::Error::new(io::ErrorKind::NotFound, "нет адресов");
+    for addr in tokio::net::lookup_host((host, port)).await? {
+        match crate::bind::tcp_connect(addr).await {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
 }
 
 /// A configured upstream that tunnels TCP for us.
@@ -353,7 +363,7 @@ async fn socks5_handshake(
         .await
         .map_err(|_| down("не ответил вовремя".into()))?
         .map_err(|e: io::Error| match e.kind() {
-            // E.g. the WireGuard/AmneziaWG bridge when its server does not answer.
+            // E.g. a WireGuard / SSTP tunnel whose server does not answer.
             io::ErrorKind::UnexpectedEof => {
                 down("закрыл соединение без ответа (сервер за ним недоступен?)".into())
             }
