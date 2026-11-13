@@ -1,189 +1,125 @@
-# LocalProxy.NET
+# LocalProxy
 
-Селективный HTTP/HTTPS/SOCKS5 прокси-сервер на .NET 10, который направляет запросы к определённым доменам через внешний прокси, остальные — напрямую.
+Селективный прокси для Windows: домены из списка идут через выбранный outbound (HTTP/SOCKS5-прокси или
+туннель WireGuard / AmneziaWG), всё остальное — напрямую. Приложение живёт в трее, настраивается
+в окне, Windows и браузеры подхватывают правила сами через PAC.
 
 ## Возможности
 
-- ✅ **HTTP и HTTPS** — полная поддержка через CONNECT туннелирование
-- ✅ **SOCKS5** — поддержка для SSH и других TCP протоколов (например, git@github.com)
-- ✅ **Единый порт** — все протоколы на одном порту с автоопределением
-- ✅ **Селективная маршрутизация** — гибкая настройка доменов
-- ✅ **Hot-reload** — изменение списка доменов без перезапуска
-- ✅ **Автоматический Fallback** — при недоступности upstream переключается на прямое соединение
-- ✅ **Windows Service** — автоматический запуск при старте системы
-- ✅ **Автоустановка** — PowerShell скрипт для установки службы и настройки прокси
-- ✅ **Wildcard домены** — поддержка паттернов `*.example.com`
-- ✅ **Basic Auth** — аутентификация для upstream прокси
+- **Правила по доменам**: «домен и поддомены», «только точно», маска (`*` и `?`), подсеть (`149.154.160.0/20`)
+  для программ, которые ходят по IP. Действие правила — «через outbound» или «напрямую» (исключение).
+  Если подходят несколько правил, побеждает самое конкретное.
+- **Готовые наборы доменов** — OpenAI, Anthropic, GitHub, Gemini, YouTube, Telegram, Discord. Набор — это подписка:
+  список обновляется с GitHub без обновления программы, домены добавляются и убираются сами.
+- **Outbound**: HTTP-прокси, SOCKS5-прокси, WireGuard и AmneziaWG (конфиг `.conf` вставляется как есть).
+  Активен один outbound на все правила. Кнопка «Проверить» показывает, работает ли он.
+- **Если outbound недоступен** — домены из правил по умолчанию блокируются (чтобы не утечь мимо туннеля);
+  можно переключить на «пускать напрямую». Иконка в трее меняет цвет, приходит уведомление.
+- **Входы**: HTTP, HTTPS (CONNECT) и SOCKS5 на одном порту, включая UDP через SOCKS5.
+- **Подключения и статистика**: лента соединений с маршрутом и ошибками, трафик по адресам (TCP и UDP),
+  кнопка «+ в правила» прямо из ленты.
+- **Автозапуск** при входе в Windows (свёрнутым в трей), без батников и служб.
+- **Автообновление** с GitHub Releases: программа сама находит новую версию, ставит по кнопке.
+- Предупреждение, если расширение браузера (Runet Censorship Bypass, TTV LOL и т. п.) задаёт свой прокси
+  и тем самым перекрывает правила LocalProxy.
 
-## Требования
+## Установка
 
-- .NET 10 Runtime
-- Windows 10/11 или Windows Server
-- Права администратора (для установки службы)
+Скачайте `LocalProxy_X.Y.Z_x64-setup.exe` со страницы [Releases](https://github.com/G1Vh/LocalProxy/releases/latest)
+и запустите. Права администратора не нужны: программа ставится для текущего пользователя.
+Нужны Windows 10/11 x64 и WebView2 (в Windows 11 уже есть, установщик при необходимости докачает).
 
-## Быстрый старт
+Дальше:
 
-### 1. Скачать релиз
+1. Вкладка **Outbound** → добавьте прокси или вставьте конфиг WireGuard/AmneziaWG → «Проверить».
+2. Вкладка **Правила** → отметьте нужные наборы и/или добавьте свои домены.
+3. Переключатель вверху окна — **Вкл**.
 
-Скачайте последнюю версию из [Releases](https://github.com/G1Vh/LocalProxy/releases):
-- `LocalProxy-vX.X.X-win-x64.zip` — для 64-битных систем
-- `LocalProxy-vX.X.X-win-x86.zip` — для 32-битных систем
+Закрытие окна сворачивает программу в трей; выход — из меню иконки в трее.
 
-Или соберите из исходников:
+### Что программа меняет в Windows
 
-### 2. Сборка из исходников
+Пока прокси включён, в настройках прокси пользователя прописан адрес PAC-скрипта
+(`http://127.0.0.1:<порт>/proxy.pac`), а при отмеченной галочке — переменные `HTTP_PROXY`, `HTTPS_PROXY`,
+`NO_PROXY` для консольных программ. Прежние значения сохраняются и возвращаются при выключении, выходе,
+обновлении и удалении программы, а также при следующем запуске после сбоя.
 
-```powershell
-cd LocalProxy
-.\publish.bat
-```
+Настройки лежат в `%APPDATA%\LocalProxy\config.json` (вместе с ключами WireGuard — файл не шифруется).
 
-### 3. Настройка
+## Ограничения
 
-Отредактируйте `publish/appsettings.json`:
+- **Расширения браузера, управляющие прокси**, важнее настроек Windows: пока они включены, браузер
+  не применяет правила LocalProxy. Программа предупреждает о таких расширениях в Edge, Chrome, Яндекс.Браузере и Brave.
+- **Голос Discord** не пойдёт через LocalProxy: Discord не умеет SOCKS5, а голос идёт по UDP напрямую.
+  Текст, картинки и сайт работают.
+- **Программы без поддержки прокси** (игры, часть мессенджеров) LocalProxy не видит: он работает только с теми,
+  кто ходит через системный прокси, `HTTP_PROXY` или настроен на SOCKS5 вручную.
+- **AmneziaWG 2.0**: такие конфиги подключаются (рукопожатие проходит), но данные не идут. Проверены и работают
+  обычный WireGuard и AmneziaWG 3.x.
 
-```json
-{
-  "Port": 3128,                    // Порт локального прокси
-  "UpstreamProxy": {
-    "Enabled": true,               // Использовать внешний прокси
-    "Host": "proxy.example.com",   // Адрес upstream
-    "Port": 8080,                  // Порт upstream
-    "Username": "",                // Basic Auth (опционально)
-    "Password": ""                 // Basic Auth (опционально)
-  },
-  "Timeouts": {
-    "HttpRequestSeconds": 30,      // Таймаут HTTP запросов
-    "TcpConnectSeconds": 10        // Таймаут TCP подключений
-  },
-  "Domains": [                     // Домены через upstream
-    "example.com",                 // Точное совпадение
-    "*.example.com"                // Wildcard поддомены
-  ]
-}
-```
+## Разработка
 
-### 4. Установка
-
-**Автоматическая установка (рекомендуется):**
-
-```powershell
-cd publish
-.\Manage-LocalProxyService.ps1
-```
-
-При запуске без параметров откроется **интерактивное меню**:
+Нужны: Rust (stable, MSVC), Go (версия из `awg-bridge/go.mod`), Node.js 24 и pnpm,
+Visual Studio Build Tools с компонентом C++.
 
 ```
-╔═══════════════════════════════════════════════════╗
-║                                                   ║
-║          LocalProxy Service Manager               ║
-║                                                   ║
-╚═══════════════════════════════════════════════════╝
-
-  1. Установить службу
-     └─ Создать Windows Service + настроить системный прокси + установить переменные среды
-
-  2. Удалить службу
-     └─ Удалить Windows Service + отключить системный прокси + удалить переменные среды
-
-  3. Показать статус
-     └─ Проверить состояние службы и настроек
-
-  4. Выход
-
-Выберите действие [1-4]:
+pnpm install
+pnpm tauri dev
 ```
 
-**Или используйте параметры для автоматизации:**
+Устройство:
 
-```powershell
-# Установка
-.\Manage-LocalProxyService.ps1 -Action Install
+| Каталог              | Что там                                                                         |
+| -------------------- | ------------------------------------------------------------------------------- |
+| `crates/proxy-core`  | Прокси: входы HTTP/SOCKS5, правила, PAC, outbound, счётчики трафика             |
+| `awg-bridge`         | Go-программа: туннель WireGuard/AmneziaWG в userspace, отдаёт его как SOCKS5     |
+| `src-tauri`          | Приложение: трей, системные настройки Windows, наборы, обновления, команды для UI |
+| `ui`                 | Интерфейс на Svelte 5                                                            |
+| `presets/presets.json` | Наборы доменов; программа скачивает его из ветки `main`                       |
 
-# Установка с кастомным портом
-.\Manage-LocalProxyService.ps1 -Action Install -Port 8080
-
-# Удаление
-.\Manage-LocalProxyService.ps1 -Action Uninstall
-
-# Проверка статуса
-.\Manage-LocalProxyService.ps1 -Action Status
-```
-
-Скрипт автоматически:
-- Создаст Windows Service с автозапуском
-- Настроит системный прокси Windows
-- Установит переменные среды HTTP_PROXY и HTTPS_PROXY
-- Запустит службу
-
-**Паттерны доменов:**
-- `example.com` — только этот домен
-- `*.example.com` — все поддомены (но не сам `example.com`)
-- Пути игнорируются, проверяется только домен
-
-## Архитектура
+Проверки (то же, что в CI):
 
 ```
-Client → LocalProxy (localhost:3128) → Protocol Detection (first byte)
-                                               ↓
-                                   ┌───────────┴───────────┐
-                                   ↓                       ↓
-                            HTTP/HTTPS               SOCKS5 (0x05)
-                              (ASCII)                     ↓
-                                   ↓                 Socks5Handler
-                             HttpHandler                  ↓
-                                   ↓                 DomainMatcher
-                            DomainMatcher                  ↓
-                                   ↓                 Match domain?
-                            Match domain?            ↙          ↘
-                            ↙          ↘        Yes: PROXY    No: DIRECT
-                      Yes: PROXY    No: DIRECT      ↓              ↓
-                          ↓              ↓     Upstream Proxy  Target Host
-                  Upstream Proxy    Target Host     ↓
-                          ↓              ↓     Target Host
-                    Target Host          
+pnpm check
+pnpm test:bridge
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-## Troubleshooting
+### Наборы доменов
 
-### Прокси не работает
+Установленные программы скачивают `presets/presets.json` из ветки `main`. Чтобы изменения дошли до пользователей,
+**увеличьте `revision`** в этом файле: программа применяет список, только если его ревизия новее той, что у неё уже есть.
+`id` набора не меняйте — по нему хранится выбор пользователя.
 
-```powershell
-# Проверка службы
-Get-Service LocalProxyService  # Должна быть Running
+### Релиз
 
-# Проверка порта
-netstat -ano | findstr :3128  # Должен слушать 127.0.0.1:3128
+1. Поднимите версию в `Cargo.toml` (`[workspace.package] version`) и `package.json`.
+2. Закоммитьте, поставьте тег и отправьте его:
 
-# Проверка системного прокси
-Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" | Select ProxyEnable, ProxyServer
-# ProxyEnable: 1, ProxyServer: localhost:3128
+   ```
+   git tag v2.0.0
+   git push origin v2.0.0
+   ```
 
-# Проверка переменных среды
-[System.Environment]::GetEnvironmentVariable("HTTP_PROXY", [System.EnvironmentVariableTarget]::User)
-[System.Environment]::GetEnvironmentVariable("HTTPS_PROXY", [System.EnvironmentVariableTarget]::User)
-# Должны быть: http://localhost:3128
+3. Workflow `Release` проверит, что тег совпадает с версией, соберёт установщик, подпишет его
+   и опубликует релиз с `latest.json`. Установленные копии увидят обновление в течение 6 часов
+   или сразу по кнопке «Проверить сейчас».
+
+Обновления подписываются ключом Tauri. Приватный ключ лежит в секретах репозитория
+`TAURI_SIGNING_PRIVATE_KEY` (и `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), публичный — в `src-tauri/tauri.conf.json`.
+Если ключ потерять, уже установленные копии не примут обновления, подписанные новым ключом: их придётся
+переустановить вручную.
+
+Для локальной сборки установщика задайте ключ в переменной среды:
+
 ```
-
-**Решение:** Переустановите через `.\Manage-LocalProxyService.ps1 -Action Uninstall` и `-Action Install`
-
-## Тестирование
-
-```powershell
-# Запуск всех тестов
-dotnet test
-
-# Ручной тест
-cd LocalProxy
-dotnet run
-
-# В другом терминале
-$env:HTTP_PROXY="http://localhost:3128"
-$env:HTTPS_PROXY="http://localhost:3128"
-curl -v https://github.com
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw "$env:USERPROFILE\.tauri\localproxy.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+pnpm tauri build
 ```
 
 ## Лицензия
 
-MIT License - см. [LICENSE](LICENSE)
+MIT — см. [LICENSE](LICENSE).

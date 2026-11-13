@@ -8,6 +8,8 @@
   const config = $derived(store.config!);
   let portInput = $state(String(store.config?.port ?? ""));
   let autostart = $state(false);
+  let checking = $state(false);
+  let checkResult = $state("");
 
   onMount(() => {
     api.getAutostart().then((a) => (autostart = a)).catch((e) => (store.error = String(e)));
@@ -30,6 +32,20 @@
   async function toggleAutostart() {
     const value = await store.run(() => api.setAutostart(!autostart));
     if (value !== undefined) autostart = value;
+  }
+
+  async function checkNow() {
+    checking = true;
+    checkResult = "";
+    try {
+      const update = await api.checkUpdate();
+      store.newVersion = update;
+      checkResult = update ? `Есть версия ${update.version}` : "У вас последняя версия";
+    } catch (e) {
+      checkResult = String(e);
+    } finally {
+      checking = false;
+    }
   }
 </script>
 
@@ -96,6 +112,22 @@
     <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
     <span>Запускать при входе в Windows (свёрнутым в трей)</span>
   </label>
+  <label class="check">
+    <input
+      type="checkbox"
+      checked={config.checkUpdates}
+      onchange={() => store.update((c) => (c.checkUpdates = !c.checkUpdates))}
+      disabled={store.busy}
+    />
+    <span>
+      Проверять обновления
+      <span class="hint">— при запуске и раз в 6 часов; устанавливаются только по кнопке</span>
+    </span>
+  </label>
+  <div class="row updates">
+    <span class="hint">Версия {store.info?.version}{checkResult ? ` · ${checkResult}` : ""}</span>
+    <button onclick={checkNow} disabled={checking}>{checking ? "Проверка…" : "Проверить сейчас"}</button>
+  </div>
 </div>
 
 <style>

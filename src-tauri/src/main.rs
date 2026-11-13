@@ -12,6 +12,7 @@ mod state;
 mod system;
 mod tray;
 mod ui_commands;
+mod updates;
 
 use tauri::{Manager, RunEvent};
 use tracing_subscriber::EnvFilter;
@@ -47,13 +48,16 @@ fn main() {
         ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let state = state::AppState::load()?;
             sync_at_startup(app.handle(), &state);
             let poke = state.health_poke.clone();
             app.manage(state);
+            app.manage(updates::Updates::default());
             tray::create(app.handle())?;
             health::spawn_monitor(app.handle().clone(), poke);
+            updates::spawn_checker(app.handle().clone());
             if !start_minimized {
                 tray::show_main_window(app.handle());
             }
@@ -93,6 +97,9 @@ fn main() {
             ui_commands::get_traffic,
             ui_commands::reset_traffic,
             health::get_health,
+            updates::check_update,
+            updates::get_pending_update,
+            updates::install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building LocalProxy");

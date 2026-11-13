@@ -49,6 +49,18 @@
     },
     "externalBin": [
       "binaries/awg-bridge"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNEQkEyNjZFN0REMTY5NDAKUldSQWFkRjliaWE2UGRKMXpWQk0rcXh1dmJHN2JDamltMDBVQ1ZTSTV3UVcvRHdmUExPL1ZxTmgK",
+      "endpoints": [
+        "https://github.com/G1Vh/LocalProxy/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

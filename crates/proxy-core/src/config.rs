@@ -28,6 +28,8 @@ pub struct Config {
     pub on_outbound_down: OnOutboundDown,
     /// Show tray notifications when the outbound goes down or comes back.
     pub notifications: bool,
+    /// Look for a new version on GitHub at start and every few hours.
+    pub check_updates: bool,
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
@@ -47,6 +49,7 @@ impl Default for Config {
             set_env_vars: false,
             on_outbound_down: OnOutboundDown::Block,
             notifications: true,
+            check_updates: true,
             active_outbound_id: None,
             outbounds: Vec::new(),
             rules: Vec::new(),

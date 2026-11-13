@@ -35,6 +35,7 @@ export interface Config {
   setEnvVars: boolean;
   onOutboundDown: OnOutboundDown;
   notifications: boolean;
+  checkUpdates: boolean;
   activeOutboundId: string | null;
   outbounds: Outbound[];
   rules: Rule[];
@@ -140,4 +141,15 @@ export interface HostTraffic {
   down: number;
   connections: number;
   lastMs: number;
+}
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
 }

@@ -15,6 +15,8 @@ import type {
   Probe,
   RuleStat,
   RulesChange,
+  UpdateInfo,
+  UpdateProgress,
 } from "./types";
 
 export const getAppInfo = () => invoke<AppInfo>("get_app_info");
@@ -40,6 +42,10 @@ export const getAwgStatus = () => invoke<AwgStatus | null>("get_awg_status");
 export const getHealth = () => invoke<Health>("get_health");
 export const getTraffic = () => invoke<HostTraffic[]>("get_traffic");
 export const resetTraffic = () => invoke<void>("reset_traffic");
+export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
+export const getPendingUpdate = () => invoke<UpdateInfo | null>("get_pending_update");
+/** Resolves only on failure: on success the app exits and the installer restarts it. */
+export const installUpdate = () => invoke<void>("install_update");
 export const importRules = (path: string) => invoke<RulesChange>("import_rules", { path });
 
 /** Fires on every config change, including ones made from the tray. */
@@ -59,3 +65,9 @@ export const onPresetsChanged = (handler: (info: PresetsInfo) => void): Promise<
 
 export const onHealth = (handler: (health: Health) => void): Promise<UnlistenFn> =>
   listen<Health>("outbound-health", (event) => handler(event.payload));
+
+export const onUpdateAvailable = (handler: (info: UpdateInfo) => void): Promise<UnlistenFn> =>
+  listen<UpdateInfo>("update-available", (event) => handler(event.payload));
+
+export const onUpdateProgress = (handler: (p: UpdateProgress) => void): Promise<UnlistenFn> =>
+  listen<UpdateProgress>("update-progress", (event) => handler(event.payload));

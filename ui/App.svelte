@@ -26,6 +26,15 @@
     if (saved) store.config = saved;
   }
 
+  const progress = $derived.by(() => {
+    const p = store.updateProgress;
+    if (!p) return "";
+    const mb = (n: number) => (n / 1048576).toFixed(1);
+    return p.total
+      ? `Скачивается: ${Math.round((p.downloaded / p.total) * 100)}%`
+      : `Скачивается: ${mb(p.downloaded)} МБ`;
+  });
+
   function selectOutbound(id: string) {
     store.update((c) => (c.activeOutboundId = id || null));
   }
@@ -109,6 +118,17 @@
       Outbound не выбран: домены из правил {config.onOutboundDown === "block"
         ? "блокируются"
         : "идут напрямую"}. Добавьте его на вкладке «Outbound».
+    </div>
+  {/if}
+  {#if store.newVersion}
+    <div class="banner notice">
+      <span>
+        Доступна версия {store.newVersion.version} (у вас {store.newVersion.currentVersion}).
+        {#if progress}{progress}…{/if}
+      </span>
+      {#if !store.updateProgress}
+        <button class="small" onclick={() => store.installUpdate()}>Установить и перезапустить</button>
+      {/if}
     </div>
   {/if}
   {#if store.error}

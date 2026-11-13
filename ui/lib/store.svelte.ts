@@ -9,6 +9,8 @@ import type {
   PresetsInfo,
   ProxyExtension,
   RuleStat,
+  UpdateInfo,
+  UpdateProgress,
 } from "./types";
 
 const MAX_EVENTS = 1000;
@@ -29,6 +31,10 @@ class Store {
   /** Browser extensions that override the proxy (the browser then ignores our PAC). */
   browserWarnings = $state<ProxyExtension[]>([]);
   health = $state<Health>({ state: "off" });
+  /** A newer version on GitHub, once found. */
+  newVersion = $state<UpdateInfo | null>(null);
+  /** Set while the update downloads. */
+  updateProgress = $state<UpdateProgress | null>(null);
 
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -42,16 +48,20 @@ class Store {
       api.onConnEvents((batch) => this.addEvents(batch)),
       api.onPresetsChanged((info) => (this.presets = info)),
       api.onHealth((h) => (this.health = h)),
+      api.onUpdateAvailable((u) => (this.newVersion = u)),
+      api.onUpdateProgress((p) => (this.updateProgress = p)),
     ];
     try {
-      const [config, info, presets, stats, health] = await Promise.all([
+      const [config, info, presets, stats, health, update] = await Promise.all([
         api.getConfig(),
         api.getAppInfo(),
         api.getPresets(),
         api.getRuleStats(),
         api.getHealth(),
+        api.getPendingUpdate(),
       ]);
       this.health = health;
+      this.newVersion = update;
       this.config = config;
       this.info = info;
       this.presets = presets;
@@ -128,6 +138,17 @@ class Store {
       if (entry) return `${preset.name}: ${entry.pattern}`;
     }
     return null;
+  }
+
+  async installUpdate() {
+    this.error = null;
+    this.updateProgress = { downloaded: 0, total: null };
+    try {
+      await api.installUpdate();
+    } catch (e) {
+      this.error = String(e);
+    }
+    this.updateProgress = null;
   }
 
   say(message: string) {
