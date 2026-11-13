@@ -15,6 +15,7 @@ pub mod server;
 mod socks5_inbound;
 mod socks5_udp;
 pub mod stream;
+pub mod traffic;
 
 pub use config::Config;
 pub use router::{ConnEvent, Inbound, RouteKind};

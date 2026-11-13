@@ -52,6 +52,7 @@ pub fn forward(app: AppHandle, mut rx: Receiver<ConnEvent>) {
             if let Some(state) = app.try_state::<AppState>() {
                 record(&mut state.rule_stats(), &batch);
             }
+            crate::health::observe(&app, &batch);
             let _ = app.emit(CONN_EVENTS, &batch);
         }
     });

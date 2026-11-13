@@ -1,9 +1,11 @@
 use proxy_core::Config;
+use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::commands;
+use crate::health::Health;
 use crate::state::AppState;
 
 const TRAY_ID: &str = "main";
@@ -18,6 +20,7 @@ struct TrayItems {
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let enabled = app.state::<AppState>().config().enabled;
+    let health = app.state::<AppState>().health().clone();
 
     let open = MenuItem::with_id(app, MENU_OPEN, "Открыть LocalProxy", true, None::<&str>)?;
     let toggle = CheckMenuItem::with_id(
@@ -32,8 +35,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&open, &toggle, &separator, &quit])?;
 
-    let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip(tooltip(enabled))
+    TrayIconBuilder::with_id(TRAY_ID)
+        .tooltip(tooltip(&health))
+        .icon(icon(&health))
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -51,23 +55,25 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             {
                 show_main_window(tray.app_handle());
             }
-        });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
-    }
-    builder.build(app)?;
+        })
+        .build(app)?;
 
     app.manage(TrayItems { toggle });
     Ok(())
 }
 
-/// Brings the tray state in line with the config.
+/// Brings the tray menu in line with the config (the icon follows the health).
 pub fn refresh(app: &AppHandle, config: &Config) {
     if let Some(items) = app.try_state::<TrayItems>() {
         let _ = items.toggle.set_checked(config.enabled);
     }
+}
+
+/// Icon colour and tooltip for the outbound state.
+pub fn show_health(app: &AppHandle, health: &Health) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_tooltip(Some(tooltip(config.enabled)));
+        let _ = tray.set_icon(Some(icon(health)));
+        let _ = tray.set_tooltip(Some(tooltip(health)));
     }
 }
 
@@ -79,10 +85,22 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
-fn tooltip(enabled: bool) -> &'static str {
-    if enabled {
-        "LocalProxy — включён"
-    } else {
-        "LocalProxy — выключен"
-    }
+fn icon(health: &Health) -> Image<'static> {
+    let bytes: &[u8] = match health {
+        Health::Off => include_bytes!("../icons/tray-off.png"),
+        Health::Up => include_bytes!("../icons/tray-on.png"),
+        Health::NoOutbound | Health::Down { .. } => include_bytes!("../icons/tray-down.png"),
+    };
+    Image::from_bytes(bytes).expect("tray icons are valid PNG")
+}
+
+fn tooltip(health: &Health) -> String {
+    // Windows cuts tray tooltips at 127 characters.
+    let text = match health {
+        Health::Off => "LocalProxy — выключен".to_owned(),
+        Health::Up => "LocalProxy — включён, outbound работает".to_owned(),
+        Health::NoOutbound => "LocalProxy — outbound не выбран".to_owned(),
+        Health::Down { reason } => format!("LocalProxy — outbound недоступен: {reason}"),
+    };
+    text.chars().take(120).collect()
 }

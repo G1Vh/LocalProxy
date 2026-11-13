@@ -82,3 +82,19 @@ pub async fn probe_at(
         external_ip,
     })
 }
+
+/// Where the health check connects: a well-known anycast address, so the
+/// check needs no DNS and works through any outbound.
+pub const HEALTH_TARGET: (&str, u16) = ("1.1.1.1", 443);
+
+/// Light liveness check for the outbound: opens (and drops) one TCP
+/// connection through it. Only failures of the outbound itself count; an
+/// upstream that answers but refuses this target is alive.
+pub async fn health_check(upstream: &Upstream) -> Result<(), String> {
+    let target = TargetAddr::new(HEALTH_TARGET.0, HEALTH_TARGET.1);
+    match upstream.connect(&target).await {
+        Ok(_) => Ok(()),
+        Err(e) if e.is_outbound_down() => Err(e.to_string()),
+        Err(_) => Ok(()),
+    }
+}

@@ -1,10 +1,13 @@
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Context;
+use proxy_core::traffic::Traffic;
 use proxy_core::{Config, ProxyServer};
+use tokio::sync::Notify;
 
 use crate::events::RuleStats;
+use crate::health::Health;
 use crate::presets::{self, PresetsFile, Source};
 use crate::system::SystemProxy;
 
@@ -34,6 +37,12 @@ pub struct AppState {
     /// Hits per rule since the app started.
     rule_stats: Mutex<RuleStats>,
     presets: Mutex<PresetsState>,
+    /// Whether the active outbound works; see [`crate::health`].
+    health: Mutex<Health>,
+    /// Wakes the health monitor for an immediate check.
+    pub health_poke: Arc<Notify>,
+    /// Bytes per host since the app started; survives proxy restarts.
+    pub traffic: Arc<Traffic>,
 }
 
 impl AppState {
@@ -65,8 +74,15 @@ impl AppState {
             warnings,
             start_error: Mutex::new(None),
             rule_stats: Mutex::new(RuleStats::new()),
+            health: Mutex::new(Health::Off),
+            health_poke: Arc::new(Notify::new()),
+            traffic: Arc::default(),
             dir,
         })
+    }
+
+    pub fn health(&self) -> MutexGuard<'_, Health> {
+        self.health.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn presets(&self) -> MutexGuard<'_, PresetsState> {

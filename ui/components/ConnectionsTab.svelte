@@ -3,6 +3,9 @@
   import { ROUTES } from "../lib/labels";
   import { store } from "../lib/store.svelte";
   import type { ConnEvent } from "../lib/types";
+  import TrafficView from "./TrafficView.svelte";
+
+  let view = $state<"feed" | "stats">("feed");
 
   let filter = $state("");
   let onlyNotable = $state(false);
@@ -33,6 +36,14 @@
   }
 </script>
 
+<div class="switch">
+  <button class:active={view === "feed"} onclick={() => (view = "feed")}>Лента</button>
+  <button class:active={view === "stats"} onclick={() => (view = "stats")}>Статистика</button>
+</div>
+
+{#if view === "stats"}
+  <TrafficView />
+{:else}
 <div class="stack">
   <div class="toolbar">
     <input type="search" placeholder="Фильтр по адресу" bind:value={filter} />
@@ -82,8 +93,25 @@
     </table>
   {/if}
 </div>
+{/if}
 
 <style>
+  .switch {
+    display: inline-flex;
+    margin-bottom: 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .switch button {
+    border: none;
+    border-radius: 0;
+    height: 28px;
+  }
+  .switch button.active {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
   .stack {
     display: flex;
     flex-direction: column;

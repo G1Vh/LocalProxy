@@ -125,3 +125,19 @@ export interface AwgStatus {
   rx: number;
   tx: number;
 }
+
+export type Health =
+  | { state: "off" }
+  | { state: "noOutbound" }
+  | { state: "up" }
+  | { state: "down"; reason: string };
+
+export interface HostTraffic {
+  host: string;
+  viaOutbound: boolean;
+  udp: boolean;
+  up: number;
+  down: number;
+  connections: number;
+  lastMs: number;
+}

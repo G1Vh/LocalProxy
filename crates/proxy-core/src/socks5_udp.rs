@@ -6,9 +6,9 @@
 //! WireGuard/AmneziaWG bridge). An HTTP proxy cannot carry UDP. The
 //! association lives as long as the client's TCP control connection.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -19,6 +19,7 @@ use crate::config::{OnOutboundDown, RuleAction};
 use crate::outbound::{Upstream, socks5_addr, socks5_udp_associate};
 use crate::router::{Inbound, RouteKind, Router, SELF_LOOP, Snapshot};
 use crate::stream::TargetAddr;
+use crate::traffic::Counters;
 
 const MAX_DATAGRAM: usize = 65535;
 /// Destinations remembered per association, only to log each one once.
@@ -52,6 +53,8 @@ pub(crate) async fn associate(mut control: TcpStream, router: Arc<Router>) {
         upstream: None,
         upstream_error: None,
         seen: HashSet::new(),
+        flows: HashMap::new(),
+        replies: Arc::default(),
     };
     let mut client: Option<SocketAddr> = None;
     let mut buf = vec![0u8; MAX_DATAGRAM];
@@ -99,6 +102,35 @@ struct Association {
     /// Why the outbound cannot carry UDP; not retried within this association.
     upstream_error: Option<String>,
     seen: HashSet<(String, u16)>,
+    /// Traffic counters per destination and route.
+    flows: HashMap<(String, u16, bool), Arc<Counters>>,
+    /// Lets reply readers find whose traffic a reply is.
+    replies: Arc<Mutex<Replies>>,
+}
+
+/// Replies come from addresses, not from the names the client asked for:
+/// remember which counters each destination belongs to.
+#[derive(Default)]
+struct Replies {
+    /// Direct: the resolved address we sent to.
+    by_addr: HashMap<SocketAddr, Arc<Counters>>,
+    /// Through the upstream: the destination as sent (name or IP).
+    by_target: HashMap<(String, u16), Arc<Counters>>,
+}
+
+impl Replies {
+    /// The upstream reports the source as an address even when we sent a
+    /// name; then the port is the best clue, if only one destination has it.
+    fn upstream_flow(&self, host: &str, port: u16) -> Option<Arc<Counters>> {
+        if let Some(c) = self.by_target.get(&(host.to_owned(), port)) {
+            return Some(c.clone());
+        }
+        let mut same_port = self.by_target.iter().filter(|((_, p), _)| *p == port);
+        match (same_port.next(), same_port.next()) {
+            (Some((_, c)), None) => Some(c.clone()),
+            _ => None,
+        }
+    }
 }
 
 enum Path {
@@ -133,9 +165,22 @@ impl Association {
                 .emit(Inbound::Udp, &target, route, decision.rule_id, error);
         }
 
+        if matches!(path, Path::Drop) {
+            return;
+        }
+        let via_outbound = matches!(path, Path::Upstream);
+        if self.flows.len() >= MAX_SEEN {
+            self.flows.clear();
+        }
+        let counters = self
+            .flows
+            .entry((target.host.clone(), target.port, via_outbound))
+            .or_insert_with(|| self.router.traffic().open_udp(&target.host, via_outbound))
+            .clone();
+        counters.add_up(payload.len());
         match path {
-            Path::Direct => self.send_direct(&target, payload).await,
-            Path::Upstream => self.send_upstream(&target, payload).await,
+            Path::Direct => self.send_direct(&target, payload, counters).await,
+            Path::Upstream => self.send_upstream(&target, payload, counters).await,
             Path::Drop => {}
         }
     }
@@ -172,11 +217,21 @@ impl Association {
         let socket = Arc::new(UdpSocket::bind(any).await.map_err(|e| e.to_string())?);
         let reader = socket.clone();
         let tx = self.tx.clone();
+        let replies = self.replies.clone();
         self.tasks.spawn(async move {
             let mut buf = vec![0u8; MAX_DATAGRAM];
             while let Ok((n, from)) = reader.recv_from(&mut buf).await {
+                if from.ip() != relay.ip() {
+                    continue;
+                }
                 // Replies already carry the SOCKS5 UDP header with the source.
-                if from.ip() == relay.ip() && tx.send(buf[..n].to_vec()).await.is_err() {
+                if let Some((src, payload)) = parse_udp_header(&buf[..n]) {
+                    let flow = lock(&replies).upstream_flow(&src.host, src.port);
+                    if let Some(c) = flow {
+                        c.add_down(payload.len());
+                    }
+                }
+                if tx.send(buf[..n].to_vec()).await.is_err() {
                     break;
                 }
             }
@@ -189,8 +244,22 @@ impl Association {
         Ok(())
     }
 
-    async fn send_upstream(&mut self, target: &TargetAddr, payload: &[u8]) {
+    async fn send_upstream(
+        &mut self,
+        target: &TargetAddr,
+        payload: &[u8],
+        counters: Arc<Counters>,
+    ) {
         let Some(up) = &self.upstream else { return };
+        {
+            let mut replies = lock(&self.replies);
+            if replies.by_target.len() >= MAX_SEEN {
+                replies.by_target.clear();
+            }
+            replies
+                .by_target
+                .insert((target.host.clone(), target.port), counters);
+        }
         let Some(addr) = socks5_addr(&target.host, target.port) else {
             return;
         };
@@ -201,10 +270,17 @@ impl Association {
         let _ = up.socket.send_to(&datagram, up.relay).await;
     }
 
-    async fn send_direct(&mut self, target: &TargetAddr, payload: &[u8]) {
+    async fn send_direct(&mut self, target: &TargetAddr, payload: &[u8], counters: Arc<Counters>) {
         let Some(dest) = resolve(target).await else {
             return;
         };
+        {
+            let mut replies = lock(&self.replies);
+            if replies.by_addr.len() >= MAX_SEEN {
+                replies.by_addr.clear();
+            }
+            replies.by_addr.insert(canonical(dest), counters);
+        }
         let Some(socket) = self.direct_socket(dest.is_ipv6()).await else {
             return;
         };
@@ -224,9 +300,14 @@ impl Association {
         let socket = Arc::new(UdpSocket::bind(any).await.ok()?);
         let reader = socket.clone();
         let tx = self.tx.clone();
+        let replies = self.replies.clone();
         self.tasks.spawn(async move {
             let mut buf = vec![0u8; MAX_DATAGRAM];
             while let Ok((n, from)) = reader.recv_from(&mut buf).await {
+                let flow = lock(&replies).by_addr.get(&canonical(from)).cloned();
+                if let Some(c) = flow {
+                    c.add_down(n);
+                }
                 let mut datagram = udp_header(from);
                 datagram.extend_from_slice(&buf[..n]);
                 if tx.send(datagram).await.is_err() {
@@ -237,6 +318,14 @@ impl Association {
         self.direct[slot] = Some(socket.clone());
         Some(socket)
     }
+}
+
+fn canonical(addr: SocketAddr) -> SocketAddr {
+    SocketAddr::new(addr.ip().to_canonical(), addr.port())
+}
+
+fn lock(replies: &Mutex<Replies>) -> std::sync::MutexGuard<'_, Replies> {
+    replies.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 async fn resolve(target: &TargetAddr) -> Option<SocketAddr> {

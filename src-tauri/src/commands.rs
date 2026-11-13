@@ -92,6 +92,7 @@ pub async fn apply_config(
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config() = config.clone();
     tray::refresh(app, &config);
+    crate::health::poke(app);
     if let Err(e) = app.emit(CONFIG_CHANGED, &config) {
         tracing::warn!("cannot emit {CONFIG_CHANGED}: {e}");
     }
@@ -138,7 +139,7 @@ pub async fn sync_runtime(
         if let Some(server) = slot.take() {
             server.stop().await;
         }
-        match ProxyServer::start(&effective).await {
+        match ProxyServer::start_with_traffic(&effective, state.traffic.clone()).await {
             Ok(server) => {
                 crate::events::forward(app.clone(), server.subscribe());
                 *slot = Some(server);

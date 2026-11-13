@@ -71,6 +71,18 @@
   <label class="check">
     <input
       type="checkbox"
+      checked={config.notifications}
+      onchange={() => store.update((c) => (c.notifications = !c.notifications))}
+      disabled={store.busy}
+    />
+    <span>
+      Уведомлять, когда outbound падает и восстанавливается
+      <span class="hint">— иконка в трее меняет цвет в любом случае</span>
+    </span>
+  </label>
+  <label class="check">
+    <input
+      type="checkbox"
       checked={config.setEnvVars}
       onchange={() => store.update((c) => (c.setEnvVars = !c.setEnvVars))}
       disabled={store.busy}

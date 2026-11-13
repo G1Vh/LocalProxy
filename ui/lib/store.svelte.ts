@@ -1,7 +1,15 @@
 // Shared app state for all tabs.
 
 import * as api from "./api";
-import type { AppInfo, Config, ConnEvent, PresetsInfo, ProxyExtension, RuleStat } from "./types";
+import type {
+  AppInfo,
+  Config,
+  ConnEvent,
+  Health,
+  PresetsInfo,
+  ProxyExtension,
+  RuleStat,
+} from "./types";
 
 const MAX_EVENTS = 1000;
 const BROWSER_CHECK_MS = 10_000;
@@ -20,6 +28,7 @@ class Store {
   busy = $state(false);
   /** Browser extensions that override the proxy (the browser then ignores our PAC). */
   browserWarnings = $state<ProxyExtension[]>([]);
+  health = $state<Health>({ state: "off" });
 
   private noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -32,14 +41,17 @@ class Store {
       api.onAppError((message) => (this.error = message)),
       api.onConnEvents((batch) => this.addEvents(batch)),
       api.onPresetsChanged((info) => (this.presets = info)),
+      api.onHealth((h) => (this.health = h)),
     ];
     try {
-      const [config, info, presets, stats] = await Promise.all([
+      const [config, info, presets, stats, health] = await Promise.all([
         api.getConfig(),
         api.getAppInfo(),
         api.getPresets(),
         api.getRuleStats(),
+        api.getHealth(),
       ]);
+      this.health = health;
       this.config = config;
       this.info = info;
       this.presets = presets;

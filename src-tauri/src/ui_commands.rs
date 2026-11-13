@@ -279,3 +279,14 @@ pub async fn get_browser_warnings() -> Vec<crate::browsers::ProxyExtension> {
         .await
         .unwrap_or_default()
 }
+
+/// Bytes per host since the app started, busiest first.
+#[tauri::command]
+pub fn get_traffic(state: State<'_, AppState>) -> Vec<proxy_core::traffic::HostTraffic> {
+    state.traffic.snapshot()
+}
+
+#[tauri::command]
+pub fn reset_traffic(state: State<'_, AppState>) {
+    state.traffic.reset();
+}

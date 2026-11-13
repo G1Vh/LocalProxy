@@ -13,6 +13,7 @@ use crate::matcher::RuleSet;
 use crate::outbound::{ConnectError, Upstream, basic_auth, connect_direct, connect_server};
 use crate::pac;
 use crate::stream::{BoxIo, TargetAddr};
+use crate::traffic::{Counted, Traffic};
 
 const EVENT_BUFFER: usize = 1024;
 
@@ -126,14 +127,16 @@ pub struct Router {
     port: u16,
     snapshot: RwLock<Arc<Snapshot>>,
     events: broadcast::Sender<ConnEvent>,
+    traffic: Arc<Traffic>,
 }
 
 impl Router {
-    pub fn new(config: &Config, port: u16) -> Self {
+    pub fn new(config: &Config, port: u16, traffic: Arc<Traffic>) -> Self {
         Self {
             port,
             snapshot: RwLock::new(Arc::new(Snapshot::from_config(config, port))),
             events: broadcast::channel(EVENT_BUFFER).0,
+            traffic,
         }
     }
 
@@ -151,6 +154,10 @@ impl Router {
 
     pub fn subscribe(&self) -> broadcast::Receiver<ConnEvent> {
         self.events.subscribe()
+    }
+
+    pub fn traffic(&self) -> Arc<Traffic> {
+        self.traffic.clone()
     }
 
     /// The port LocalProxy listens on (to spot an outbound that points back at us).
@@ -248,7 +255,10 @@ impl Router {
         tracing::debug!(%target, ?inbound, ?route, error = error.as_deref().unwrap_or(""), "route");
         self.emit(inbound, target, route, decision.rule_id, error);
 
-        result.map(|(hop, _)| hop)
+        result.map(|((io, hop), route)| {
+            let counters = self.traffic.open(&target.host, route == RouteKind::Proxy);
+            (Box::new(Counted::new(io, counters)) as BoxIo, hop)
+        })
     }
 }
 

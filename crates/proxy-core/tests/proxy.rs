@@ -834,6 +834,15 @@ async fn udp_associate_direct() {
         events.try_recv().is_err(),
         "one event per destination, not per datagram"
     );
+
+    // 3 datagrams of "ping N" (6 bytes) each way, one UDP flow, direct.
+    let rows = proxy.traffic().snapshot();
+    let row = rows
+        .iter()
+        .find(|r| r.host == "127.0.0.1" && r.udp)
+        .unwrap();
+    assert!(!row.via_outbound);
+    assert_eq!((row.up, row.down, row.connections), (18, 18, 1));
 }
 
 #[tokio::test]
@@ -865,6 +874,16 @@ async fn udp_associate_through_socks5_upstream_keeps_host_names() {
         (far.host.as_str(), far.inbound),
         ("localhost", proxy_core::Inbound::Udp)
     );
+
+    // The reply comes back from an address, not from "localhost": it must
+    // still be counted for the name, through the outbound.
+    let rows = proxy.traffic().snapshot();
+    let row = rows
+        .iter()
+        .find(|r| r.host == "localhost" && r.udp)
+        .unwrap();
+    assert!(row.via_outbound);
+    assert_eq!((row.up, row.down), (12, 12));
 }
 
 #[tokio::test]
@@ -960,4 +979,28 @@ async fn socks5_upstream_with_credentials() {
     .await;
     let (status, _) = http_connect(proxy.port(), &format!("localhost:{echo}")).await;
     assert_eq!(status, 403, "bad credentials mean the outbound is down");
+}
+
+#[tokio::test]
+async fn traffic_is_counted_live_per_host_and_route() {
+    let echo = echo_server().await;
+    let traffic = std::sync::Arc::new(proxy_core::traffic::Traffic::default());
+    let mut cfg = config(None, OnOutboundDown::Block);
+    cfg.rules.clear();
+    let proxy = ProxyServer::start_with_traffic(&cfg, traffic.clone())
+        .await
+        .unwrap();
+
+    let (status, mut s) = http_connect(proxy.port(), &format!("127.0.0.1:{echo}")).await;
+    assert_eq!(status, 200);
+    assert_echo(&mut s).await;
+    // Still open: the numbers must already be there.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let rows = traffic.snapshot();
+    let row = rows.iter().find(|r| r.host == "127.0.0.1").unwrap();
+    assert!(!row.via_outbound);
+    assert_eq!((row.up, row.down, row.connections), (4, 4, 1));
+
+    traffic.reset();
+    assert!(traffic.snapshot().is_empty());
 }

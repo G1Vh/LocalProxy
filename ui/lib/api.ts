@@ -5,7 +5,9 @@ import type {
   AwgStatus,
   Config,
   ConnEvent,
+  Health,
   HostCheck,
+  HostTraffic,
   MatchType,
   Outbound,
   PresetsInfo,
@@ -35,6 +37,9 @@ export const setPresetSelected = (id: string, selected: boolean) =>
 export const exportRules = (path: string) => invoke<number>("export_rules", { path });
 export const getBrowserWarnings = () => invoke<ProxyExtension[]>("get_browser_warnings");
 export const getAwgStatus = () => invoke<AwgStatus | null>("get_awg_status");
+export const getHealth = () => invoke<Health>("get_health");
+export const getTraffic = () => invoke<HostTraffic[]>("get_traffic");
+export const resetTraffic = () => invoke<void>("reset_traffic");
 export const importRules = (path: string) => invoke<RulesChange>("import_rules", { path });
 
 /** Fires on every config change, including ones made from the tray. */
@@ -51,3 +56,6 @@ export const onConnEvents = (handler: (events: ConnEvent[]) => void): Promise<Un
 
 export const onPresetsChanged = (handler: (info: PresetsInfo) => void): Promise<UnlistenFn> =>
   listen<PresetsInfo>("presets-changed", (event) => handler(event.payload));
+
+export const onHealth = (handler: (health: Health) => void): Promise<UnlistenFn> =>
+  listen<Health>("outbound-health", (event) => handler(event.payload));

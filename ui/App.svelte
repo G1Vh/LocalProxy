@@ -35,8 +35,24 @@
   <header>
     <span class="title">LocalProxy</span>
     {#if config}
-      <span class="pill" class:ok={config.enabled}>
-        {config.enabled ? `Включён · 127.0.0.1:${config.port}` : "Выключен"}
+      {@const h = store.health}
+      <span
+        class="pill"
+        class:ok={config.enabled && h.state === "up"}
+        class:warn={config.enabled && h.state !== "up"}
+        title={h.state === "down" ? h.reason : ""}
+      >
+        {#if !config.enabled}
+          Выключен
+        {:else if h.state === "up"}
+          Включён · 127.0.0.1:{config.port} · outbound работает
+        {:else if h.state === "down"}
+          Включён · outbound недоступен
+        {:else if h.state === "noOutbound"}
+          Включён · outbound не выбран
+        {:else}
+          Включён · 127.0.0.1:{config.port}
+        {/if}
       </span>
       <span class="spacer"></span>
       <label class="outbound-pick">
@@ -80,6 +96,12 @@
         правила LocalProxy: расширения важнее настроек Windows. Отключите в списке расширений браузера,
         если хотите, чтобы работали правила LocalProxy.
       </span>
+    </div>
+  {/if}
+  {#if config?.enabled && active && store.health.state === "down"}
+    <div class="banner warning">
+      Outbound «{active.name}» недоступен: {store.health.reason}. Домены из правил
+      {config.onOutboundDown === "block" ? "заблокированы" : "идут напрямую"}, пока он не вернётся.
     </div>
   {/if}
   {#if config?.enabled && !active}

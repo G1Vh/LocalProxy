@@ -5,6 +5,7 @@ mod awg;
 mod browsers;
 mod commands;
 mod events;
+mod health;
 mod presets;
 mod rules;
 mod state;
@@ -45,11 +46,14 @@ fn main() {
             Some(vec![MINIMIZED_ARG]),
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
             let state = state::AppState::load()?;
             sync_at_startup(app.handle(), &state);
+            let poke = state.health_poke.clone();
             app.manage(state);
             tray::create(app.handle())?;
+            health::spawn_monitor(app.handle().clone(), poke);
             if !start_minimized {
                 tray::show_main_window(app.handle());
             }
@@ -86,6 +90,9 @@ fn main() {
             ui_commands::import_rules,
             ui_commands::get_browser_warnings,
             ui_commands::get_awg_status,
+            ui_commands::get_traffic,
+            ui_commands::reset_traffic,
+            health::get_health,
         ])
         .build(tauri::generate_context!())
         .expect("error while building LocalProxy");

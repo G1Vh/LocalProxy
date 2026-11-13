@@ -14,6 +14,7 @@ use tokio_util::task::TaskTracker;
 
 use crate::config::Config;
 use crate::router::{ConnEvent, Router};
+use crate::traffic::Traffic;
 use crate::{http_inbound, socks5_inbound};
 
 /// A client that connects and stays silent is dropped after this long.
@@ -66,6 +67,15 @@ impl ConnCtx {
 impl ProxyServer {
     /// Binds and starts serving. Port 0 picks a free port (used by tests).
     pub async fn start(config: &Config) -> Result<Self, ServerError> {
+        Self::start_with_traffic(config, Arc::default()).await
+    }
+
+    /// Like [`ProxyServer::start`], counting into existing totals (so they
+    /// survive a restart, e.g. a port change).
+    pub async fn start_with_traffic(
+        config: &Config,
+        traffic: Arc<Traffic>,
+    ) -> Result<Self, ServerError> {
         let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, config.port))
             .await
             .map_err(|source| match source.kind() {
@@ -87,7 +97,7 @@ impl ProxyServer {
             }
         };
 
-        let router = Arc::new(Router::new(config, port));
+        let router = Arc::new(Router::new(config, port, traffic));
         let cancel = CancellationToken::new();
         let tracker = TaskTracker::new();
         let ctx = ConnCtx {
@@ -122,6 +132,11 @@ impl ProxyServer {
 
     pub fn subscribe(&self) -> broadcast::Receiver<ConnEvent> {
         self.router.subscribe()
+    }
+
+    /// Bytes per host counted by this server.
+    pub fn traffic(&self) -> Arc<Traffic> {
+        self.router.traffic()
     }
 
     /// URL of the PAC for the current rules. The `v` parameter changes with the

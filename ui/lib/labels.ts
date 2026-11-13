@@ -27,3 +27,10 @@ export const ON_DOWN: { value: OnOutboundDown; label: string }[] = [
 
 export const matchTypeLabel = (t: MatchType) =>
   MATCH_TYPES.find((m) => m.value === t)?.label ?? t;
+
+export function bytes(n: number): string {
+  if (n < 1024) return `${n} Б`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} КБ`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} МБ`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} ГБ`;
+}
