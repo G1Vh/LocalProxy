@@ -151,8 +151,8 @@ keepalive и SOCKS5 он получает готовыми. Протокол с�
 3. Закоммитьте, поставьте тег и отправьте его:
 
    ```
-   git tag v2.2.0
-   git push origin v2.2.0
+   git tag v2.3.0
+   git push origin v2.3.0
    ```
 
 4. Workflow `Release` проверит, что тег совпадает с версией и что в CHANGELOG есть её раздел, соберёт
