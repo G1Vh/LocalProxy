@@ -22,6 +22,11 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: awg-bridge/go.mod
+          cache-dependency-path: awg-bridge/go.sum
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -36,6 +41,12 @@ jobs:
 
       - name: Build frontend
         run: pnpm build
+
+      - name: Bridge (WireGuard/AmneziaWG) tests
+        run: pnpm test:bridge
+
+      - name: Build bridge
+        run: pnpm build:bridge
 
       - name: Rustfmt
         run: cargo fmt --all --check

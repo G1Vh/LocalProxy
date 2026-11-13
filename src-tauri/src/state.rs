@@ -25,6 +25,8 @@ pub struct AppState {
     pub proxy: tokio::sync::Mutex<Option<ProxyServer>>,
     /// Windows proxy settings and environment variables.
     pub system: SystemProxy,
+    /// The WireGuard/AmneziaWG bridge, while the active outbound needs it.
+    pub awg: tokio::sync::Mutex<Option<crate::awg::AwgProcess>>,
     /// Lasting problems found at startup (e.g. a broken config file).
     pub warnings: Vec<String>,
     /// Why the proxy could not start; cleared once it starts.
@@ -59,6 +61,7 @@ impl AppState {
             config: Mutex::new(config),
             proxy: tokio::sync::Mutex::new(None),
             system: SystemProxy::new(&dir),
+            awg: tokio::sync::Mutex::new(None),
             warnings,
             start_error: Mutex::new(None),
             rule_stats: Mutex::new(RuleStats::new()),

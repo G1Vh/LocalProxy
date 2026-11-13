@@ -13,6 +13,7 @@ pub mod probe;
 pub mod router;
 pub mod server;
 mod socks5_inbound;
+mod socks5_udp;
 pub mod stream;
 
 pub use config::Config;

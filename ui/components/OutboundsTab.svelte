@@ -1,7 +1,8 @@
 <script lang="ts">
   import * as api from "../lib/api";
   import { newId, store } from "../lib/store.svelte";
-  import type { Outbound, Probe } from "../lib/types";
+  import { onMount } from "svelte";
+  import type { AwgStatus, Outbound, Probe } from "../lib/types";
 
   type Draft = {
     id: string;
@@ -20,6 +21,22 @@
   let probes = $state<Record<string, { busy: boolean; result?: Probe; error?: string }>>({});
 
   const config = $derived(store.config!);
+
+  // Tunnel state of the running WireGuard/AmneziaWG bridge, refreshed while the tab is open.
+  let awg = $state<AwgStatus | null>(null);
+  onMount(() => {
+    const poll = () =>
+      api.getAwgStatus().then((s) => (awg = s)).catch(() => (awg = null));
+    poll();
+    const timer = setInterval(poll, 3000);
+    return () => clearInterval(timer);
+  });
+
+  function bytes(n: number) {
+    if (n < 1024) return `${n} Б`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} КБ`;
+    return `${(n / 1024 / 1024).toFixed(1)} МБ`;
+  }
 
   const typeLabel = { http: "HTTP-прокси", socks5: "SOCKS5", awg: "WireGuard / AmneziaWG" } as const;
 
@@ -191,14 +208,14 @@
         </label>
         <div class="toolbar">
           <input type="file" accept=".conf,.txt" onchange={loadConf} />
-          <span class="hint pill warn">Подключение через WireGuard / AmneziaWG появится на этапе 5 — пока профиль только сохраняется.</span>
+          <span class="hint">Подходит и обычный WireGuard, и AmneziaWG (все версии маскировки). Туннель поднимается внутри LocalProxy: без драйвера и прав администратора, через него идут только домены из правил.</span>
         </div>
       {/if}
       {#if draftError}<div class="err">{draftError}</div>{/if}
       <div class="toolbar">
         {@render probeLine(draft.id)}
         <span class="spacer"></span>
-        <button onclick={testDraft} disabled={draft.type === "awg" || probes[draft.id]?.busy}>Проверить</button>
+        <button onclick={testDraft} disabled={probes[draft.id]?.busy}>Проверить</button>
         <button onclick={() => (draft = null)}>Отмена</button>
         <button class="primary" onclick={saveDraft} disabled={store.busy}>Сохранить</button>
       </div>
@@ -219,9 +236,15 @@
       </label>
       <span class="pill">{typeLabel[o.type]}</span>
       <span class="hint mono">{address(o)}</span>
+      {#if o.type === "awg" && awg?.outboundId === o.id}
+        {@const ago = awg.lastHandshake ? Math.round(Date.now() / 1000 - awg.lastHandshake) : null}
+        <span class="pill {ago !== null && ago < 180 ? 'ok' : 'warn'}" title="Состояние туннеля">
+          {ago === null ? "сервер пока не ответил" : `рукопожатие ${ago} с назад`} · ↓ {bytes(awg.rx)} ↑ {bytes(awg.tx)}
+        </span>
+      {/if}
       <span class="spacer"></span>
       {@render probeLine(o.id)}
-      <button class="small" onclick={() => test(o)} disabled={o.type === "awg" || probes[o.id]?.busy}>
+      <button class="small" onclick={() => test(o)} disabled={probes[o.id]?.busy}>
         Проверить
       </button>
       <button class="small" onclick={() => edit(o)}>Изменить</button>

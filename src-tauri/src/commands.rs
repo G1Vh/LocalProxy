@@ -119,11 +119,20 @@ pub async fn sync_runtime(
         if let Some(server) = slot.take() {
             server.stop().await;
         }
+        sync_awg(app, state, config).await;
         return error;
     }
 
-    // The proxy runs on the user's rules plus the entries of selected presets.
-    let effective = crate::presets::effective(config, &state.presets().file);
+    // The proxy runs on the user's rules plus the entries of selected presets,
+    // with a WireGuard/AmneziaWG outbound replaced by its bridge.
+    let mut effective = crate::presets::effective(config, &state.presets().file);
+    if let Some(bridge) = sync_awg(app, state, config).await {
+        effective
+            .outbounds
+            .iter_mut()
+            .filter(|o| o.id == bridge.0)
+            .for_each(|o| o.kind = proxy_core::config::OutboundKind::Socks5(bridge.1.clone()));
+    }
     let restart = slot.as_ref().is_none_or(|s| s.port() != config.port);
     if restart {
         if let Some(server) = slot.take() {
@@ -159,6 +168,44 @@ pub async fn sync_runtime(
     }
     state.set_start_error(None);
     None
+}
+
+/// Starts, restarts or stops the WireGuard/AmneziaWG bridge so that it runs
+/// exactly when routing is on and the active outbound is an AWG profile.
+/// Returns the AWG outbound id and the bridge's SOCKS5 endpoint while it runs.
+///
+/// A bridge that fails to start does not switch routing off: the AWG outbound
+/// then counts as down (block or go direct, per policy) and the reason is
+/// shown in the window.
+async fn sync_awg(
+    app: &AppHandle,
+    state: &AppState,
+    config: &Config,
+) -> Option<(uuid::Uuid, proxy_core::config::ProxyEndpoint)> {
+    let wanted = config.enabled.then(|| crate::awg::wanted(config)).flatten();
+    let mut slot = state.awg.lock().await;
+
+    let keep = match (&mut *slot, wanted) {
+        (Some(running), Some((id, conf))) => {
+            running.outbound_id == id && running.conf == conf && running.is_alive()
+        }
+        _ => false,
+    };
+    if !keep && let Some(old) = slot.take() {
+        old.stop().await;
+    }
+    let (id, conf) = wanted?;
+    if slot.is_none() {
+        match crate::awg::AwgProcess::start(id, conf).await {
+            Ok(bridge) => *slot = Some(bridge),
+            Err(e) => {
+                tracing::error!("awg-bridge: {e}");
+                let _ = app.emit(APP_ERROR, e);
+                return None;
+            }
+        }
+    }
+    slot.as_ref().map(|b| (b.outbound_id, b.endpoint.clone()))
 }
 
 async fn apply_system(state: &AppState, desired: Desired) -> Result<(), String> {

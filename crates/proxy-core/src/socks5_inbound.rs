@@ -1,5 +1,4 @@
-//! SOCKS5 inbound (RFC 1928), no authentication, CONNECT command.
-//! UDP ASSOCIATE arrives with the WireGuard/AmneziaWG outbound (stage 5).
+//! SOCKS5 inbound (RFC 1928), no authentication: CONNECT and UDP ASSOCIATE.
 
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -11,9 +10,13 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::router::{Inbound, RouteError, Router};
+use crate::socks5_udp;
 use crate::stream::TargetAddr;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+
+const CMD_CONNECT: u8 = 1;
+const CMD_UDP_ASSOCIATE: u8 = 3;
 
 const REP_SUCCEEDED: u8 = 0;
 const REP_GENERAL_FAILURE: u8 = 1;
@@ -26,8 +29,8 @@ const REP_COMMAND_NOT_SUPPORTED: u8 = 7;
 const REP_ADDRESS_NOT_SUPPORTED: u8 = 8;
 
 pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
-    let target = match timeout(HANDSHAKE_TIMEOUT, handshake(&mut client)).await {
-        Ok(Ok(Some(target))) => target,
+    let (command, target) = match timeout(HANDSHAKE_TIMEOUT, handshake(&mut client)).await {
+        Ok(Ok(Some(request))) => request,
         Ok(Ok(None)) => return,
         Ok(Err(e)) => {
             tracing::debug!("socks5 handshake failed: {e}");
@@ -38,6 +41,11 @@ pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
             return;
         }
     };
+
+    if command == CMD_UDP_ASSOCIATE {
+        // The address in the request is only a hint about the client; ignored.
+        return socks5_udp::associate(client, router).await;
+    }
 
     match router.connect(&target, Inbound::Socks5).await {
         Ok(mut upstream) => {
@@ -65,7 +73,7 @@ pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
 
 /// Negotiates the method and reads the request.
 /// `Ok(None)` means the client was answered with an error and should be dropped.
-async fn handshake(client: &mut TcpStream) -> io::Result<Option<TargetAddr>> {
+async fn handshake(client: &mut TcpStream) -> io::Result<Option<(u8, TargetAddr)>> {
     let mut head = [0u8; 2];
     client.read_exact(&mut head).await?;
     if head[0] != 5 {
@@ -109,11 +117,11 @@ async fn handshake(client: &mut TcpStream) -> io::Result<Option<TargetAddr>> {
     };
     let port = client.read_u16().await?;
 
-    if command != 1 {
+    if command != CMD_CONNECT && command != CMD_UDP_ASSOCIATE {
         reply(client, REP_COMMAND_NOT_SUPPORTED).await?;
         return Ok(None);
     }
-    Ok(Some(TargetAddr::new(host, port)))
+    Ok(Some((command, TargetAddr::new(host, port))))
 }
 
 async fn reply(client: &mut TcpStream, code: u8) -> io::Result<()> {

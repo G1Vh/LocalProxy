@@ -1,6 +1,6 @@
 //! Commands behind the rules, outbound and connections tabs.
 
-use proxy_core::config::{Config, MatchType, Outbound, RuleAction};
+use proxy_core::config::{Config, MatchType, Outbound, OutboundKind, RuleAction};
 use proxy_core::matcher::{RuleSet, normalize_pattern};
 use proxy_core::outbound::Upstream;
 use proxy_core::probe::{Probe, probe};
@@ -8,6 +8,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
+use crate::awg::{AwgProcess, BridgeStatus};
 use crate::commands::apply_config;
 use crate::events::RuleStats;
 use crate::presets::{self, Entry, Source};
@@ -57,11 +58,59 @@ pub async fn test_outbound(
     state: State<'_, AppState>,
     outbound: Outbound,
 ) -> Result<Probe, String> {
+    if let OutboundKind::Awg { config: conf } = &outbound.kind {
+        return test_awg(&state, outbound.id, conf).await;
+    }
     let upstream = Upstream::from_kind(&outbound.kind);
     if upstream.points_to(state.config().port) {
         return Err(proxy_core::router::SELF_LOOP.into());
     }
     probe(&upstream).await.map_err(|e| e.to_string())
+}
+
+/// Probes through the running bridge if it serves this profile; otherwise
+/// starts a temporary one (two tunnels with the same key would fight).
+async fn test_awg(state: &AppState, id: Uuid, conf: &str) -> Result<Probe, String> {
+    let running = {
+        let mut slot = state.awg.lock().await;
+        match slot.as_mut() {
+            Some(b) if b.outbound_id == id && b.conf == conf => {
+                b.is_alive().then(|| b.endpoint.clone())
+            }
+            _ => None,
+        }
+    };
+    if let Some(endpoint) = running {
+        return probe(&Upstream::Socks5(endpoint))
+            .await
+            .map_err(|e| e.to_string());
+    }
+    let bridge = AwgProcess::start(id, conf).await?;
+    let result = probe(&Upstream::Socks5(bridge.endpoint.clone())).await;
+    bridge.stop().await;
+    result.map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AwgStatus {
+    outbound_id: Uuid,
+    #[serde(flatten)]
+    status: BridgeStatus,
+}
+
+/// State of the running tunnel, for the outbound tab; `None` when no bridge runs.
+#[tauri::command]
+pub async fn get_awg_status(state: State<'_, AppState>) -> Result<Option<AwgStatus>, String> {
+    let mut slot = state.awg.lock().await;
+    let Some(bridge) = slot.as_mut() else {
+        return Ok(None);
+    };
+    let status = bridge.status().await?;
+    Ok(Some(AwgStatus {
+        outbound_id: bridge.outbound_id,
+        status,
+    }))
 }
 
 /// Event name; payload is [`PresetsInfo`].

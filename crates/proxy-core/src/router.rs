@@ -60,6 +60,8 @@ pub enum Inbound {
     /// HTTP CONNECT tunnel.
     Connect,
     Socks5,
+    /// SOCKS5 UDP ASSOCIATE: one event per destination of an association.
+    Udp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -151,6 +153,31 @@ impl Router {
         self.events.subscribe()
     }
 
+    /// The port LocalProxy listens on (to spot an outbound that points back at us).
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub(crate) fn emit(
+        &self,
+        inbound: Inbound,
+        target: &TargetAddr,
+        route: RouteKind,
+        rule_id: Option<Uuid>,
+        error: Option<String>,
+    ) {
+        // No subscribers is fine.
+        let _ = self.events.send(ConnEvent {
+            at_ms: now_ms(),
+            inbound,
+            host: target.host.clone(),
+            port: target.port,
+            route,
+            rule_id,
+            error,
+        });
+    }
+
     /// A TCP tunnel to `target`.
     pub async fn connect(
         &self,
@@ -219,16 +246,7 @@ impl Router {
             Err(e @ RouteError::Failed(_)) => (RouteKind::Failed, Some(e.to_string())),
         };
         tracing::debug!(%target, ?inbound, ?route, error = error.as_deref().unwrap_or(""), "route");
-        // No subscribers is fine.
-        let _ = self.events.send(ConnEvent {
-            at_ms: now_ms(),
-            inbound,
-            host: target.host.clone(),
-            port: target.port,
-            route,
-            rule_id: decision.rule_id,
-            error,
-        });
+        self.emit(inbound, target, route, decision.rule_id, error);
 
         result.map(|(hop, _)| hop)
     }

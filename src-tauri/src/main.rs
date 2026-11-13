@@ -1,6 +1,7 @@
 // Hide the console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod awg;
 mod browsers;
 mod commands;
 mod events;
@@ -84,6 +85,7 @@ fn main() {
             ui_commands::export_rules,
             ui_commands::import_rules,
             ui_commands::get_browser_warnings,
+            ui_commands::get_awg_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building LocalProxy");

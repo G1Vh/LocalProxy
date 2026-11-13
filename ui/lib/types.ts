@@ -117,3 +117,11 @@ export interface ProxyExtension {
   extension: string;
   id: string;
 }
+
+export interface AwgStatus {
+  outboundId: string;
+  /** Unix seconds; 0 while the server has not answered. */
+  lastHandshake: number;
+  rx: number;
+  tx: number;
+}

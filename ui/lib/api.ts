@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AppInfo,
+  AwgStatus,
   Config,
   ConnEvent,
   HostCheck,
@@ -33,6 +34,7 @@ export const setPresetSelected = (id: string, selected: boolean) =>
   invoke<Config>("set_preset_selected", { id, selected });
 export const exportRules = (path: string) => invoke<number>("export_rules", { path });
 export const getBrowserWarnings = () => invoke<ProxyExtension[]>("get_browser_warnings");
+export const getAwgStatus = () => invoke<AwgStatus | null>("get_awg_status");
 export const importRules = (path: string) => invoke<RulesChange>("import_rules", { path });
 
 /** Fires on every config change, including ones made from the tray. */

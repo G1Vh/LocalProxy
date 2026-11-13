@@ -732,3 +732,232 @@ async fn outbound_pointing_to_itself_is_refused_not_looped() {
     // Exactly one connection was routed: no second lap through ourselves.
     assert!(events.try_recv().is_err());
 }
+
+// ---------- UDP ASSOCIATE ----------
+
+/// UDP echo on 127.0.0.1 and [::1], same port.
+async fn udp_echo_server() -> u16 {
+    use tokio::net::UdpSocket;
+    let v4 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = v4.local_addr().unwrap().port();
+    let mut sockets = vec![v4];
+    if let Ok(v6) = UdpSocket::bind((Ipv6Addr::LOCALHOST, port)).await {
+        sockets.push(v6);
+    }
+    for s in sockets {
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            while let Ok((n, from)) = s.recv_from(&mut buf).await {
+                let _ = s.send_to(&buf[..n], from).await;
+            }
+        });
+    }
+    port
+}
+
+/// Opens an association; returns the control connection, the client socket
+/// and the relay address.
+async fn udp_associate(proxy: u16) -> (TcpStream, tokio::net::UdpSocket, std::net::SocketAddr) {
+    let mut c = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy))
+        .await
+        .unwrap();
+    c.write_all(&[5, 1, 0]).await.unwrap();
+    let mut r = [0u8; 2];
+    c.read_exact(&mut r).await.unwrap();
+    c.write_all(&[5, 3, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+    let mut reply = [0u8; 10];
+    timeout(T, c.read_exact(&mut reply)).await.unwrap().unwrap();
+    assert_eq!(reply[1], 0, "UDP ASSOCIATE refused");
+    let relay = std::net::SocketAddr::from((
+        [reply[4], reply[5], reply[6], reply[7]],
+        u16::from_be_bytes([reply[8], reply[9]]),
+    ));
+    let udp = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .unwrap();
+    (c, udp, relay)
+}
+
+/// Sends one datagram to `host:port` through the relay and waits for a reply.
+async fn udp_roundtrip(
+    udp: &tokio::net::UdpSocket,
+    relay: std::net::SocketAddr,
+    host: &str,
+    port: u16,
+    payload: &[u8],
+    wait: Duration,
+) -> Option<Vec<u8>> {
+    let mut d = vec![0, 0, 0];
+    match host.parse::<Ipv4Addr>() {
+        Ok(ip) => {
+            d.push(1);
+            d.extend_from_slice(&ip.octets());
+        }
+        Err(_) => {
+            d.push(3);
+            d.push(host.len() as u8);
+            d.extend_from_slice(host.as_bytes());
+        }
+    }
+    d.extend_from_slice(&port.to_be_bytes());
+    d.extend_from_slice(payload);
+    udp.send_to(&d, relay).await.unwrap();
+    let mut buf = [0u8; 2048];
+    let (n, _) = timeout(wait, udp.recv_from(&mut buf)).await.ok()?.ok()?;
+    let reply = &buf[..n];
+    // Strip RSV RSV FRAG ATYP ADDR PORT.
+    let offset = match reply[3] {
+        1 => 4 + 4 + 2,
+        4 => 4 + 16 + 2,
+        _ => panic!("unexpected address type in reply"),
+    };
+    Some(reply[offset..].to_vec())
+}
+
+#[tokio::test]
+async fn udp_associate_direct() {
+    let echo = udp_echo_server().await;
+    let mut cfg = config(None, OnOutboundDown::Block);
+    cfg.rules.clear();
+    let proxy = start(&cfg).await;
+    let mut events = proxy.subscribe();
+    let (_control, udp, relay) = udp_associate(proxy.port()).await;
+    for i in 0..3 {
+        let msg = format!("ping {i}");
+        let reply = udp_roundtrip(&udp, relay, "127.0.0.1", echo, msg.as_bytes(), T).await;
+        assert_eq!(reply.as_deref(), Some(msg.as_bytes()));
+    }
+    let event = events.recv().await.unwrap();
+    assert_eq!(event.inbound, proxy_core::Inbound::Udp);
+    assert_eq!(event.route, RouteKind::Direct);
+    assert!(
+        events.try_recv().is_err(),
+        "one event per destination, not per datagram"
+    );
+}
+
+#[tokio::test]
+async fn udp_associate_through_socks5_upstream_keeps_host_names() {
+    let echo = udp_echo_server().await;
+    let mut upstream_cfg = config(None, OnOutboundDown::Block);
+    upstream_cfg.rules.clear();
+    let upstream = start(&upstream_cfg).await;
+    let mut upstream_events = upstream.subscribe();
+
+    let proxy = start(&config(
+        Some(OutboundKind::Socks5(endpoint(upstream.port()))),
+        OnOutboundDown::Block,
+    ))
+    .await;
+    let mut events = proxy.subscribe();
+    let (_control, udp, relay) = udp_associate(proxy.port()).await;
+    let reply = udp_roundtrip(&udp, relay, "localhost", echo, b"via upstream", T).await;
+    assert_eq!(reply.as_deref(), Some(&b"via upstream"[..]));
+
+    let front = events.recv().await.unwrap();
+    assert_eq!(
+        (front.inbound, front.route),
+        (proxy_core::Inbound::Udp, RouteKind::Proxy)
+    );
+    // The name reached the upstream unresolved: it routed "localhost", not an IP.
+    let far = upstream_events.recv().await.unwrap();
+    assert_eq!(
+        (far.host.as_str(), far.inbound),
+        ("localhost", proxy_core::Inbound::Udp)
+    );
+}
+
+#[tokio::test]
+async fn udp_cannot_go_through_http_upstream() {
+    let echo = udp_echo_server().await;
+    let (up_port, _) = fake_http_upstream(None).await;
+    let proxy = start(&config(
+        Some(OutboundKind::Http(endpoint(up_port))),
+        OnOutboundDown::Block,
+    ))
+    .await;
+    let mut events = proxy.subscribe();
+    let (_control, udp, relay) = udp_associate(proxy.port()).await;
+    let reply = udp_roundtrip(&udp, relay, "localhost", echo, b"x", Duration::from_secs(1)).await;
+    assert_eq!(reply, None, "matched UDP must be dropped, not sent direct");
+    let event = events.recv().await.unwrap();
+    assert_eq!(event.route, RouteKind::Blocked);
+    assert!(event.error.unwrap().contains("HTTP"));
+
+    // Unmatched destinations still work in the same association.
+    let reply = udp_roundtrip(&udp, relay, "127.0.0.1", echo, b"direct", T).await;
+    assert_eq!(reply.as_deref(), Some(&b"direct"[..]));
+}
+
+/// Minimal upstream SOCKS5 server that requires username/password and only
+/// does CONNECT (always to 127.0.0.1 on the requested port).
+async fn fake_socks5_with_auth(user: &'static str, pass: &'static str) -> u16 {
+    let l = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = l.accept().await {
+            tokio::spawn(async move {
+                let mut head = [0u8; 2];
+                s.read_exact(&mut head).await.unwrap();
+                let mut methods = vec![0u8; head[1] as usize];
+                s.read_exact(&mut methods).await.unwrap();
+                assert!(methods.contains(&2), "client must offer user/pass");
+                s.write_all(&[5, 2]).await.unwrap();
+                let mut v = [0u8; 2];
+                s.read_exact(&mut v).await.unwrap();
+                let mut u = vec![0u8; v[1] as usize];
+                s.read_exact(&mut u).await.unwrap();
+                let plen = s.read_u8().await.unwrap();
+                let mut p = vec![0u8; plen as usize];
+                s.read_exact(&mut p).await.unwrap();
+                if u != user.as_bytes() || p != pass.as_bytes() {
+                    let _ = s.write_all(&[1, 1]).await;
+                    return;
+                }
+                s.write_all(&[1, 0]).await.unwrap();
+                let mut req = [0u8; 4];
+                s.read_exact(&mut req).await.unwrap();
+                let skip = match req[3] {
+                    1 => 4,
+                    4 => 16,
+                    _ => s.read_u8().await.unwrap() as usize,
+                };
+                let mut addr = vec![0u8; skip];
+                s.read_exact(&mut addr).await.unwrap();
+                let port = s.read_u16().await.unwrap();
+                let mut up = TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                    .await
+                    .unwrap();
+                s.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+                let _ = copy_bidirectional(&mut s, &mut up).await;
+            });
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn socks5_upstream_with_credentials() {
+    let echo = echo_server().await;
+    let up = fake_socks5_with_auth("alice", "s3cret").await;
+    let mut ep = endpoint(up);
+    ep.username = "alice".into();
+    ep.password = "s3cret".into();
+    let proxy = start(&config(
+        Some(OutboundKind::Socks5(ep.clone())),
+        OnOutboundDown::Block,
+    ))
+    .await;
+    let (status, mut s) = http_connect(proxy.port(), &format!("localhost:{echo}")).await;
+    assert_eq!(status, 200);
+    assert_echo(&mut s).await;
+
+    ep.password = "wrong".into();
+    let proxy = start(&config(
+        Some(OutboundKind::Socks5(ep)),
+        OnOutboundDown::Block,
+    ))
+    .await;
+    let (status, _) = http_connect(proxy.port(), &format!("localhost:{echo}")).await;
+    assert_eq!(status, 403, "bad credentials mean the outbound is down");
+}

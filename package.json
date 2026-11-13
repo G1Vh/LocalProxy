@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:bridge": "go build -C awg-bridge -trimpath -ldflags=\"-s -w\" -o ../src-tauri/binaries/awg-bridge-x86_64-pc-windows-msvc.exe .",
+    "test:bridge": "go test -C awg-bridge ./..."
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

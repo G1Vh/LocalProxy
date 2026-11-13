@@ -1,7 +1,7 @@
 //! Ways out: direct TCP, upstream HTTP proxy (CONNECT), upstream SOCKS5 proxy.
 
 use std::io;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 use base64::Engine;
@@ -209,6 +209,73 @@ async fn socks5_connect(
     ep: &ProxyEndpoint,
     target: &TargetAddr,
 ) -> Result<BoxIo, ConnectError> {
+    socks5_handshake(&mut stream, ep, SOCKS5_CONNECT, target).await?;
+    Ok(Box::new(stream))
+}
+
+const SOCKS5_CONNECT: u8 = 1;
+const SOCKS5_UDP_ASSOCIATE: u8 = 3;
+
+/// Opens a UDP association on an upstream SOCKS5 proxy. Returns the control
+/// connection (the association lives while it is open) and the relay address
+/// to send datagrams to.
+pub async fn socks5_udp_associate(
+    ep: &ProxyEndpoint,
+) -> Result<(TcpStream, SocketAddr), ConnectError> {
+    let mut stream = connect_server(ep).await?;
+    let any = TargetAddr::new("0.0.0.0", 0);
+    let bound = socks5_handshake(&mut stream, ep, SOCKS5_UDP_ASSOCIATE, &any).await?;
+    let relay = match bound {
+        // "Same host as the TCP connection" is common for 0.0.0.0.
+        Some(addr) if !addr.ip().is_unspecified() => addr,
+        Some(addr) => SocketAddr::new(
+            stream
+                .peer_addr()
+                .map_err(|e| ConnectError::OutboundDown(e.to_string()))?
+                .ip(),
+            addr.port(),
+        ),
+        None => {
+            return Err(ConnectError::OutboundDown(
+                "SOCKS5-прокси вернул имя вместо адреса для UDP".into(),
+            ));
+        }
+    };
+    Ok((stream, relay))
+}
+
+/// SOCKS5 address field (ATYP + address + port). Host names are sent as names,
+/// so the far end resolves them. `None` if a name is longer than 255 bytes.
+pub fn socks5_addr(host: &str, port: u16) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(4 + host.len() + 2);
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => {
+            out.push(1);
+            out.extend_from_slice(&ip.octets());
+        }
+        Ok(IpAddr::V6(ip)) => {
+            out.push(4);
+            out.extend_from_slice(&ip.octets());
+        }
+        Err(_) => {
+            let name = host.as_bytes();
+            out.push(3);
+            out.push(u8::try_from(name.len()).ok()?);
+            out.extend_from_slice(name);
+        }
+    }
+    out.extend_from_slice(&port.to_be_bytes());
+    Some(out)
+}
+
+/// Greeting, optional username/password auth and one request. Returns the
+/// bound address from the reply (`None` if the server gave a name).
+async fn socks5_handshake(
+    stream: &mut TcpStream,
+    ep: &ProxyEndpoint,
+    command: u8,
+    target: &TargetAddr,
+) -> Result<Option<SocketAddr>, ConnectError> {
     let down = |msg: String| ConnectError::OutboundDown(format!("SOCKS5-прокси: {msg}"));
     let handshake = async {
         let with_auth = !ep.username.is_empty() || !ep.password.is_empty();
@@ -240,56 +307,58 @@ async fn socks5_connect(
             _ => return Ok(Err(down("сервер не принял способ авторизации".into()))),
         }
 
-        let mut request = vec![5, 1, 0];
-        match target.host.parse::<IpAddr>() {
-            Ok(IpAddr::V4(ip)) => {
-                request.push(1);
-                request.extend_from_slice(&ip.octets());
-            }
-            Ok(IpAddr::V6(ip)) => {
-                request.push(4);
-                request.extend_from_slice(&ip.octets());
-            }
-            Err(_) => {
-                let host = target.host.as_bytes();
-                if host.len() > 255 {
-                    return Ok(Err(ConnectError::Rejected {
-                        target: target.to_string(),
-                        reason: "имя хоста длиннее 255 байт".into(),
-                    }));
-                }
-                request.push(3);
-                request.push(host.len() as u8);
-                request.extend_from_slice(host);
-            }
-        }
-        request.extend_from_slice(&target.port.to_be_bytes());
+        let Some(addr) = socks5_addr(&target.host, target.port) else {
+            return Ok(Err(ConnectError::Rejected {
+                target: target.to_string(),
+                reason: "имя хоста длиннее 255 байт".into(),
+            }));
+        };
+        let mut request = vec![5, command, 0];
+        request.extend_from_slice(&addr);
         stream.write_all(&request).await?;
 
         let mut head = [0u8; 4];
         stream.read_exact(&mut head).await?;
-        let addr_len = match head[3] {
-            1 => 4,
-            4 => 16,
-            3 => stream.read_u8().await? as usize,
+        let bound = match head[3] {
+            1 => {
+                let mut ip = [0u8; 4];
+                stream.read_exact(&mut ip).await?;
+                let port = stream.read_u16().await?;
+                Some(SocketAddr::from((ip, port)))
+            }
+            4 => {
+                let mut ip = [0u8; 16];
+                stream.read_exact(&mut ip).await?;
+                let port = stream.read_u16().await?;
+                Some(SocketAddr::from((ip, port)))
+            }
+            3 => {
+                let len = stream.read_u8().await? as usize;
+                let mut skip = vec![0u8; len + 2];
+                stream.read_exact(&mut skip).await?;
+                None
+            }
             other => return Ok(Err(down(format!("неизвестный тип адреса {other}")))),
         };
-        let mut skip = vec![0u8; addr_len + 2];
-        stream.read_exact(&mut skip).await?;
         if head[1] != 0 {
             return Ok(Err(ConnectError::Rejected {
                 target: target.to_string(),
                 reason: socks5_reply_text(head[1]).into(),
             }));
         }
-        Ok::<Result<(), ConnectError>, io::Error>(Ok(()))
+        Ok::<Result<Option<SocketAddr>, ConnectError>, io::Error>(Ok(bound))
     };
 
     timeout(HANDSHAKE_TIMEOUT, handshake)
         .await
         .map_err(|_| down("не ответил вовремя".into()))?
-        .map_err(|e: io::Error| down(e.to_string()))??;
-    Ok(Box::new(stream))
+        .map_err(|e: io::Error| match e.kind() {
+            // E.g. the WireGuard/AmneziaWG bridge when its server does not answer.
+            io::ErrorKind::UnexpectedEof => {
+                down("закрыл соединение без ответа (сервер за ним недоступен?)".into())
+            }
+            _ => down(e.to_string()),
+        })?
 }
 
 fn socks5_reply_text(code: u8) -> &'static str {
