@@ -22,8 +22,18 @@
     return rows.filter((r) => (!onlyOutbound || r.viaOutbound) && (!q || r.host.includes(q)));
   });
 
-  const total = (via: boolean) =>
-    rows.filter((r) => r.viaOutbound === via).reduce((s, r) => s + r.up + r.down, 0);
+  const sum = (list: HostTraffic[]) => list.reduce((s, r) => s + r.up + r.down, 0);
+  /** Per outbound with traffic, then direct. */
+  const totals = $derived.by(() => {
+    const ids = [...new Set(rows.filter((r) => r.outboundId).map((r) => r.outboundId!))];
+    return [
+      ...ids.map((id) => ({
+        label: `Через «${store.outboundName(id) ?? "удалённый outbound"}»`,
+        bytes: sum(rows.filter((r) => r.outboundId === id)),
+      })),
+      { label: "Напрямую через LocalProxy", bytes: sum(rows.filter((r) => !r.viaOutbound)) },
+    ];
+  });
 
   async function reset() {
     await store.run(() => api.resetTraffic());
@@ -33,14 +43,12 @@
 
 <div class="stack">
   <div class="totals">
-    <div class="tile">
-      <span class="hint">Через outbound</span>
-      <span class="num">{bytes(total(true))}</span>
-    </div>
-    <div class="tile">
-      <span class="hint">Напрямую через LocalProxy</span>
-      <span class="num">{bytes(total(false))}</span>
-    </div>
+    {#each totals as t (t.label)}
+      <div class="tile">
+        <span class="hint">{t.label}</span>
+        <span class="num">{bytes(t.bytes)}</span>
+      </div>
+    {/each}
   </div>
   <div class="toolbar">
     <input type="search" placeholder="Фильтр по адресу" bind:value={filter} />
@@ -63,11 +71,13 @@
         </tr>
       </thead>
       <tbody>
-        {#each shown as r (r.host + r.viaOutbound + r.udp)}
+        {#each shown as r (r.host + r.outboundId + r.udp)}
           <tr>
             <td class="mono host">{r.host}</td>
             <td>
-              <span class="pill" class:proxy={r.viaOutbound}>{r.viaOutbound ? "outbound" : "напрямую"}</span>
+              <span class="pill" class:proxy={r.viaOutbound}>
+                {r.viaOutbound ? (store.outboundName(r.outboundId) ?? "outbound") : "напрямую"}
+              </span>
               {#if r.udp}<span class="pill" title="UDP через SOCKS5">UDP</span>{/if}
             </td>
             <td class="c-num">{bytes(r.down)}</td>

@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use uuid::Uuid;
 
 #[derive(Debug, Default)]
 pub struct Counters {
@@ -39,8 +40,10 @@ impl Counters {
 #[serde(rename_all = "camelCase")]
 pub struct HostTraffic {
     pub host: String,
-    /// Through the outbound (true) or direct (false).
+    /// Through an outbound (true) or direct (false).
     pub via_outbound: bool,
+    /// Which outbound, when through one.
+    pub outbound_id: Option<Uuid>,
     /// UDP (SOCKS5 UDP ASSOCIATE) rather than TCP.
     pub udp: bool,
     pub up: u64,
@@ -49,30 +52,32 @@ pub struct HostTraffic {
     pub last_ms: u64,
 }
 
+/// Host, outbound (`None`: direct), UDP.
+type FlowKey = (String, Option<Uuid>, bool);
+
 /// All counters; shared by the router and whoever shows them.
 #[derive(Debug, Default)]
 pub struct Traffic {
-    /// (host, via outbound, udp)
-    hosts: Mutex<HashMap<(String, bool, bool), Arc<Counters>>>,
+    hosts: Mutex<HashMap<FlowKey, Arc<Counters>>>,
 }
 
 impl Traffic {
     /// Counters for a new TCP connection to `host`; the connection is counted now.
-    pub fn open(&self, host: &str, via_outbound: bool) -> Arc<Counters> {
-        self.open_flow(host, via_outbound, false)
+    pub fn open(&self, host: &str, outbound: Option<Uuid>) -> Arc<Counters> {
+        self.open_flow(host, outbound, false)
     }
 
     /// Counters for a new UDP destination of an association.
-    pub fn open_udp(&self, host: &str, via_outbound: bool) -> Arc<Counters> {
-        self.open_flow(host, via_outbound, true)
+    pub fn open_udp(&self, host: &str, outbound: Option<Uuid>) -> Arc<Counters> {
+        self.open_flow(host, outbound, true)
     }
 
-    fn open_flow(&self, host: &str, via_outbound: bool, udp: bool) -> Arc<Counters> {
+    fn open_flow(&self, host: &str, outbound: Option<Uuid>, udp: bool) -> Arc<Counters> {
         let counters = self
             .hosts
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .entry((host.to_owned(), via_outbound, udp))
+            .entry((host.to_owned(), outbound, udp))
             .or_default()
             .clone();
         counters.connections.fetch_add(1, Ordering::Relaxed);
@@ -87,9 +92,10 @@ impl Traffic {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
-            .map(|((host, via_outbound, udp), c)| HostTraffic {
+            .map(|((host, outbound, udp), c)| HostTraffic {
                 host: host.clone(),
-                via_outbound: *via_outbound,
+                via_outbound: outbound.is_some(),
+                outbound_id: *outbound,
                 udp: *udp,
                 up: c.up.load(Ordering::Relaxed),
                 down: c.down.load(Ordering::Relaxed),
@@ -178,17 +184,27 @@ mod tests {
     async fn counts_both_directions_per_host_and_route() {
         let traffic = Traffic::default();
         let (a, mut b) = tokio::io::duplex(64);
-        let mut counted = Counted::new(a, traffic.open("example.com", true));
+        let vpn = Some(Uuid::new_v4());
+        let mut counted = Counted::new(a, traffic.open("example.com", vpn));
         counted.write_all(b"hello").await.unwrap();
         b.write_all(b"world!!").await.unwrap();
         let mut buf = [0u8; 7];
         counted.read_exact(&mut buf).await.unwrap();
-        traffic.open("example.com", true);
-        traffic.open("example.com", false);
-        traffic.open_udp("example.com", true).add_down(3);
+        traffic.open("example.com", vpn);
+        traffic.open("example.com", None);
+        traffic.open_udp("example.com", vpn).add_down(3);
+        traffic.open("example.com", Some(Uuid::new_v4()));
 
         let rows = traffic.snapshot();
-        let proxied = rows.iter().find(|r| r.via_outbound && !r.udp).unwrap();
+        let proxied = rows
+            .iter()
+            .find(|r| r.outbound_id == vpn && !r.udp)
+            .unwrap();
+        assert_eq!(
+            rows.iter().filter(|r| r.via_outbound && !r.udp).count(),
+            2,
+            "each outbound counts apart"
+        );
         assert_eq!((proxied.up, proxied.down, proxied.connections), (5, 7, 2));
         let direct = rows.iter().find(|r| !r.via_outbound).unwrap();
         let udp = rows.iter().find(|r| r.udp).unwrap();

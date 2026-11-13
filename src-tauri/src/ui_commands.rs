@@ -30,6 +30,8 @@ pub struct HostCheck {
     action: RuleAction,
     /// The deciding rule (a user rule or a preset entry); `None` if none matched.
     rule_id: Option<Uuid>,
+    /// For "proxy": the outbound it goes through (the rule's own or the default).
+    outbound_id: Option<Uuid>,
 }
 
 /// Canonical form of a pattern, or why it is invalid. Used to validate edits.
@@ -50,6 +52,9 @@ pub fn check_host(state: State<'_, AppState>, input: String) -> Result<HostCheck
         host,
         action: decision.action,
         rule_id: decision.rule_id,
+        outbound_id: (decision.action == RuleAction::Proxy)
+            .then(|| decision.outbound.or(config.active_outbound_id))
+            .flatten(),
     })
 }
 
@@ -72,11 +77,9 @@ pub async fn test_outbound(
 /// starts a temporary one (two tunnels with the same key would fight).
 async fn test_tunnel(state: &AppState, id: Uuid, spec: &TunnelSpec) -> Result<Probe, String> {
     let running = {
-        let mut slot = state.tunnel.lock().await;
-        match slot.as_mut() {
-            Some(t) if t.outbound_id == id && t.spec == *spec => {
-                t.is_alive().then(|| t.endpoint.clone())
-            }
+        let mut tunnels = state.tunnels.lock().await;
+        match tunnels.get_mut(&id) {
+            Some(t) if t.spec == *spec => t.is_alive().then(|| t.endpoint.clone()),
             _ => None,
         }
     };
@@ -99,18 +102,20 @@ pub struct TunnelInfo {
     status: TunnelStatus,
 }
 
-/// State of the running tunnel, for the outbound tab; `None` when none runs.
+/// State of the running tunnels, for the outbound tab.
 #[tauri::command]
-pub async fn get_tunnel_status(state: State<'_, AppState>) -> Result<Option<TunnelInfo>, String> {
-    let mut slot = state.tunnel.lock().await;
-    let Some(tunnel) = slot.as_mut() else {
-        return Ok(None);
-    };
-    let status = tunnel.status().await?;
-    Ok(Some(TunnelInfo {
-        outbound_id: tunnel.outbound_id,
-        status,
-    }))
+pub async fn get_tunnel_status(state: State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {
+    let mut tunnels = state.tunnels.lock().await;
+    let mut out = Vec::new();
+    for tunnel in tunnels.values_mut() {
+        // A tunnel that does not answer is shown as silent, not as an error.
+        let status = tunnel.status().await.unwrap_or_default();
+        out.push(TunnelInfo {
+            outbound_id: tunnel.outbound_id,
+            status,
+        });
+    }
+    Ok(out)
 }
 
 /// Event name; payload is [`PresetsInfo`].

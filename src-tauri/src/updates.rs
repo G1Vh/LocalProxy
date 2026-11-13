@@ -99,8 +99,8 @@ fn before_exit(app: &AppHandle) {
         tracing::error!("cannot restore system proxy before update: {e:#}");
     }
     // The installer replaces the tunnel exe too: stop it (kill on drop).
-    if let Ok(mut tunnel) = state.tunnel.try_lock() {
-        tunnel.take();
+    if let Ok(mut tunnels) = state.tunnels.try_lock() {
+        tunnels.clear();
     }
 }
 

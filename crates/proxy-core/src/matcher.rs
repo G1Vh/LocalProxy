@@ -20,12 +20,15 @@ pub struct Decision {
     pub action: RuleAction,
     /// The rule that decided; `None` when nothing matched.
     pub rule_id: Option<Uuid>,
+    /// The rule's own outbound; `None` means the default one.
+    pub outbound: Option<Uuid>,
 }
 
 impl Decision {
     pub const UNMATCHED: Self = Self {
         action: RuleAction::Direct,
         rule_id: None,
+        outbound: None,
     };
 }
 
@@ -49,6 +52,7 @@ pub(crate) struct Compiled {
     /// `network/prefix` for subnets.
     pub pattern: String,
     pub action: RuleAction,
+    pub outbound: Option<Uuid>,
     pub literal_len: usize,
     /// Parsed network for [`MatchType::Cidr`].
     pub net: Option<(IpAddr, u8)>,
@@ -83,6 +87,7 @@ impl RuleSet {
                         literal_len,
                         pattern,
                         action: r.action,
+                        outbound: r.outbound,
                         net,
                     })
                 }
@@ -117,6 +122,7 @@ impl RuleSet {
             .map_or(Decision::UNMATCHED, |r| Decision {
                 action: r.action,
                 rule_id: Some(r.id),
+                outbound: r.outbound,
             })
     }
 }
@@ -314,6 +320,7 @@ mod tests {
             match_type,
             action,
             comment: String::new(),
+            outbound: None,
         }
     }
 

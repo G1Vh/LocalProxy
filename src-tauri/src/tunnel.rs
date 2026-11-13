@@ -212,10 +212,28 @@ impl TunnelProcess {
     }
 }
 
-/// The tunnel the active outbound needs, if it is a tunnel outbound.
-pub fn wanted(config: &Config) -> Option<(Uuid, TunnelSpec)> {
-    let outbound = config.active_outbound()?;
-    TunnelSpec::of(outbound).map(|spec| (outbound.id, spec))
+/// A tunnel the routing needs.
+#[derive(Debug, Clone)]
+pub struct Wanted {
+    pub id: Uuid,
+    pub name: String,
+    pub spec: TunnelSpec,
+}
+
+/// Tunnels of the outbounds in use (the default one and those rules name);
+/// `effective` is the config with presets expanded.
+pub fn wanted(effective: &Config) -> Vec<Wanted> {
+    effective
+        .used_outbounds()
+        .into_iter()
+        .filter_map(|o| {
+            TunnelSpec::of(o).map(|spec| Wanted {
+                id: o.id,
+                name: o.name.clone(),
+                spec,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

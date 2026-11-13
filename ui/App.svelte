@@ -19,6 +19,9 @@
   const config = $derived(store.config);
   const active = $derived(config?.outbounds.find((o) => o.id === config.activeOutboundId));
   const presetCount = $derived(config?.presets.length ?? 0);
+  const downCount = $derived(
+    Object.values(store.health.outbounds).filter((h) => h.state === "down").length,
+  );
 
   async function toggle() {
     if (!config) return;
@@ -44,7 +47,7 @@
   <header>
     <span class="title">LocalProxy</span>
     {#if config}
-      {@const h = store.health}
+      {@const h = store.health.overall}
       <span
         class="pill"
         class:ok={config.enabled && h.state === "up"}
@@ -54,9 +57,11 @@
         {#if !config.enabled}
           Выключен
         {:else if h.state === "up"}
-          Включён · 127.0.0.1:{config.port} · outbound работает
+          Включён · 127.0.0.1:{config.port} · {Object.keys(store.health.outbounds).length > 1
+            ? "outbound'ы работают"
+            : "outbound работает"}
         {:else if h.state === "down"}
-          Включён · outbound недоступен
+          Включён · {downCount > 1 ? `недоступно outbound'ов: ${downCount}` : "outbound недоступен"}
         {:else if h.state === "noOutbound"}
           Включён · outbound не выбран
         {:else}
@@ -65,7 +70,7 @@
       </span>
       <span class="spacer"></span>
       <label class="outbound-pick">
-        <span class="hint">Outbound</span>
+        <span class="hint" title="Для правил и наборов без своего outbound">По умолчанию</span>
         <select
           value={config.activeOutboundId ?? ""}
           onchange={(e) => selectOutbound(e.currentTarget.value)}
@@ -107,17 +112,18 @@
       </span>
     </div>
   {/if}
-  {#if config?.enabled && active && store.health.state === "down"}
+  {#if config?.enabled && store.health.overall.state === "down"}
     <div class="banner warning">
-      Outbound «{active.name}» недоступен: {store.health.reason}. Домены из правил
-      {config.onOutboundDown === "block" ? "заблокированы" : "идут напрямую"}, пока он не вернётся.
+      {downCount > 1 ? "Недоступны" : "Недоступен"}: {store.health.overall.reason}. Их домены
+      {config.onOutboundDown === "block" ? "заблокированы" : "идут напрямую"}, пока outbound не вернётся.
     </div>
   {/if}
   {#if config?.enabled && !active}
     <div class="banner warning">
-      Outbound не выбран: домены из правил {config.onOutboundDown === "block"
+      Outbound по умолчанию не выбран: правила и наборы без своего outbound {config.onOutboundDown ===
+      "block"
         ? "блокируются"
-        : "идут напрямую"}. Добавьте его на вкладке «Outbound».
+        : "идут напрямую"}. Выберите его вверху или добавьте на вкладке «Outbound».
     </div>
   {/if}
   {#if store.newVersion}

@@ -3,7 +3,7 @@
   import * as api from "../lib/api";
   import { ACTIONS, MATCH_TYPES } from "../lib/labels";
   import { newId, store, timeAgo } from "../lib/store.svelte";
-  import type { MatchType, MergeReport, Rule, RuleAction } from "../lib/types";
+  import type { MatchType, MergeReport, Rule } from "../lib/types";
 
   let filter = $state("");
   let pasteOpen = $state(false);
@@ -14,7 +14,7 @@
 
   let newPattern = $state("");
   let newType = $state<MatchType>("domainAndSubdomains");
-  let newAction = $state<RuleAction>("proxy");
+  let newRoute = $state("proxy");
   let newComment = $state("");
   let newError = $state<string | null>(null);
 
@@ -34,6 +34,25 @@
       store.presets?.source ?? "bundled"
     ],
   );
+
+  // A rule's route as one select value: "direct", "proxy" (default outbound)
+  // or "proxy:<outbound id>".
+  const routeOf = (r: Pick<Rule, "action" | "outbound">) =>
+    r.action === "direct" ? "direct" : r.outbound ? `proxy:${r.outbound}` : "proxy";
+  const fromRoute = (v: string): Pick<Rule, "action" | "outbound"> =>
+    v === "direct"
+      ? { action: "direct", outbound: null }
+      : { action: "proxy", outbound: v.startsWith("proxy:") ? v.slice(6) : null };
+  const defaultName = $derived(store.outboundName(config.activeOutboundId));
+
+  function setPresetOutbound(id: string, outbound: string) {
+    store.update((c) => {
+      const map = { ...(c.presetOutbounds ?? {}) };
+      if (outbound) map[id] = outbound;
+      else delete map[id];
+      c.presetOutbounds = map;
+    });
+  }
 
   function presetHits(entries: { id: string }[]) {
     return entries.reduce((sum, e) => sum + (store.stats[e.id]?.hits ?? 0), 0);
@@ -64,7 +83,7 @@
       enabled: true,
       pattern,
       matchType: newType,
-      action: newAction,
+      ...fromRoute(newRoute),
       comment: newComment.trim(),
     };
     await store.update((c) => c.rules.unshift(rule));
@@ -147,13 +166,22 @@
     if (!result) return;
     const rule = store.ruleLabel(result.ruleId);
     const proxy = result.action === "proxy";
-    const how = proxy ? "через outbound" : "напрямую";
+    const via = store.outboundName(result.outboundId);
+    const how = proxy ? (via ? `через «${via}»` : "через outbound (не выбран)") : "напрямую";
     checkResult = {
       proxy,
       text: rule ? `${result.host} → ${how} (правило ${rule})` : `${result.host} → напрямую (нет правила)`,
     };
   }
 </script>
+
+{#snippet routeOptions()}
+  <option value="proxy">через outbound{defaultName ? ` (${defaultName})` : ""}</option>
+  {#each config.outbounds.filter((o) => o.id !== config.activeOutboundId) as o (o.id)}
+    <option value={"proxy:" + o.id}>через «{o.name}»</option>
+  {/each}
+  {#each ACTIONS.filter((a) => a.value === "direct") as a}<option value={a.value}>{a.label}</option>{/each}
+{/snippet}
 
 <div class="stack">
   <div class="card presets">
@@ -179,6 +207,18 @@
             <span class="name">{preset.name}</span>
           </label>
           <span class="hint">{preset.entries.length} зап.</span>
+          {#if selected && config.outbounds.length > 1}
+            <select
+              class="preset-outbound"
+              value={config.presetOutbounds?.[preset.id] ?? ""}
+              onchange={(e) => setPresetOutbound(preset.id, e.currentTarget.value)}
+              disabled={store.busy}
+              title="Через какой outbound идёт набор"
+            >
+              <option value="">по умолчанию</option>
+              {#each config.outbounds as o (o.id)}<option value={o.id}>{o.name}</option>{/each}
+            </select>
+          {/if}
           {#if presetHits(preset.entries)}
             <span class="pill proxy">{presetHits(preset.entries)}</span>
           {/if}
@@ -223,7 +263,7 @@
         <th class="c-on"></th>
         <th>Шаблон</th>
         <th class="c-type">Тип</th>
-        <th class="c-action">Действие</th>
+        <th class="c-action">Куда</th>
         <th class="c-comment">Комментарий</th>
         <th class="c-hits">Срабатывания</th>
         <th class="c-del"></th>
@@ -248,8 +288,8 @@
           </select>
         </td>
         <td>
-          <select bind:value={newAction}>
-            {#each ACTIONS as a}<option value={a.value}>{a.label}</option>{/each}
+          <select bind:value={newRoute}>
+            {@render routeOptions()}
           </select>
         </td>
         <td><input type="text" placeholder="Комментарий" bind:value={newComment} /></td>
@@ -294,11 +334,11 @@
           </td>
           <td>
             <select
-              value={rule.action}
+              value={routeOf(rule)}
               class:direct={rule.action === "direct"}
-              onchange={(e) => patch(rule.id, { action: e.currentTarget.value as RuleAction })}
+              onchange={(e) => patch(rule.id, fromRoute(e.currentTarget.value))}
             >
-              {#each ACTIONS as a}<option value={a.value}>{a.label}</option>{/each}
+              {@render routeOptions()}
             </select>
           </td>
           <td>
@@ -483,7 +523,12 @@
     width: 185px;
   }
   .c-action {
-    width: 160px;
+    width: 200px;
+  }
+  .preset-outbound {
+    max-width: 130px;
+    height: 24px;
+    font-size: 12px;
   }
   .c-comment {
     width: 22%;

@@ -1,9 +1,13 @@
+use std::collections::HashMap;
+
 use proxy_core::config::{OutboundKind, ProxyEndpoint};
 use proxy_core::{Config, ProxyServer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use tauri_plugin_autostart::ManagerExt;
+use tokio::task::JoinSet;
+use uuid::Uuid;
 
 use crate::state::AppState;
 use crate::system::Desired;
@@ -89,6 +93,7 @@ pub async fn apply_config(
     state: &AppState,
     mut config: Config,
 ) -> Result<Config, String> {
+    config.forget_missing_outbounds();
     let start_error = sync_runtime(app, state, &mut config).await;
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config() = config.clone();
@@ -121,12 +126,13 @@ pub async fn sync_runtime(
         if let Some(server) = slot.take() {
             server.stop().await;
         }
-        sync_tunnel(app, state, config).await;
+        sync_tunnels(app, state, Vec::new()).await;
         return error;
     }
 
-    let tunnel = sync_tunnel(app, state, config).await;
-    let effective = effective_config(state, config, tunnel);
+    let with_presets = crate::presets::effective(config, &state.presets().file);
+    let tunnels = sync_tunnels(app, state, crate::tunnel::wanted(&with_presets)).await;
+    let effective = with_tunnels(with_presets, &tunnels);
     let restart = slot.as_ref().is_none_or(|s| s.port() != config.port);
     if restart {
         if let Some(server) = slot.take() {
@@ -164,85 +170,92 @@ pub async fn sync_runtime(
     None
 }
 
-/// The proxy runs on the user's rules plus the entries of selected presets,
-/// with a tunnel outbound (WireGuard, SSTP) replaced by its running tunnel.
-fn effective_config(
-    state: &AppState,
-    config: &Config,
-    tunnel: Option<(uuid::Uuid, ProxyEndpoint)>,
-) -> Config {
-    let mut effective = crate::presets::effective(config, &state.presets().file);
-    if let Some((id, endpoint)) = tunnel {
-        effective
-            .outbounds
-            .iter_mut()
-            .filter(|o| o.id == id)
-            .for_each(|o| o.kind = OutboundKind::Socks5(endpoint.clone()));
+/// The proxy runs on the user's rules plus the entries of selected presets
+/// (`with_presets`), with each tunnel outbound (WireGuard, SSTP) replaced by
+/// its running tunnel.
+fn with_tunnels(mut with_presets: Config, tunnels: &HashMap<Uuid, ProxyEndpoint>) -> Config {
+    for outbound in &mut with_presets.outbounds {
+        if let Some(endpoint) = tunnels.get(&outbound.id) {
+            outbound.kind = OutboundKind::Socks5(endpoint.clone());
+        }
     }
-    effective
+    with_presets
 }
 
-/// Starts, restarts or stops the tunnel process so that it runs exactly
-/// when routing is on and the active outbound is a tunnel. Returns the
-/// outbound id and the tunnel's SOCKS5 endpoint while it runs.
+/// Starts, restarts or stops tunnel processes so that exactly the wanted
+/// ones run (the tunnel outbounds in use, while routing is on). Returns the
+/// SOCKS5 endpoint of each running tunnel by outbound id.
 ///
-/// A tunnel that fails to start does not switch routing off: the outbound
+/// A tunnel that fails to start does not switch routing off: its outbound
 /// then counts as down (block or go direct, per policy), the reason is shown
 /// in the window, and the health monitor keeps trying.
-async fn sync_tunnel(
+async fn sync_tunnels(
     app: &AppHandle,
     state: &AppState,
-    config: &Config,
-) -> Option<(uuid::Uuid, ProxyEndpoint)> {
-    let wanted = config
-        .enabled
-        .then(|| crate::tunnel::wanted(config))
-        .flatten();
-    let mut slot = state.tunnel.lock().await;
+    wanted: Vec<crate::tunnel::Wanted>,
+) -> HashMap<Uuid, ProxyEndpoint> {
+    let mut running = state.tunnels.lock().await;
 
-    let keep = match (&mut *slot, &wanted) {
-        (Some(running), Some((id, spec))) => {
-            running.outbound_id == *id && running.spec == *spec && running.is_alive()
+    let stale: Vec<Uuid> = running
+        .iter_mut()
+        .filter_map(|(id, t)| {
+            let keep = t.is_alive() && wanted.iter().any(|w| w.id == *id && w.spec == t.spec);
+            (!keep).then_some(*id)
+        })
+        .collect();
+    for id in stale {
+        if let Some(tunnel) = running.remove(&id) {
+            tunnel.stop().await;
         }
-        _ => false,
-    };
-    if !keep && let Some(old) = slot.take() {
-        old.stop().await;
     }
-    let Some((id, spec)) = wanted else {
-        state.set_tunnel_error(None);
-        return None;
-    };
-    if slot.is_none() {
-        match crate::tunnel::TunnelProcess::start(id, &spec).await {
+
+    // All missing tunnels start at once: SSTP alone may take seconds.
+    let mut starting = JoinSet::new();
+    for w in wanted
+        .iter()
+        .filter(|w| !running.contains_key(&w.id))
+        .cloned()
+    {
+        starting.spawn(async move {
+            let result = crate::tunnel::TunnelProcess::start(w.id, &w.spec).await;
+            (w, result)
+        });
+    }
+    while let Some(joined) = starting.join_next().await {
+        let Ok((w, result)) = joined else { continue };
+        match result {
             Ok(tunnel) => {
-                *slot = Some(tunnel);
-                state.set_tunnel_error(None);
+                running.insert(w.id, tunnel);
+                state.set_tunnel_error(w.id, None);
             }
             Err(e) => {
-                tracing::error!("tunnel: {e}");
+                tracing::error!(outbound = %w.name, "tunnel: {e}");
                 // Retries repeat the same error: show it once.
-                if state.set_tunnel_error(Some(e.clone())) {
-                    let _ = app.emit(APP_ERROR, e);
+                if state.set_tunnel_error(w.id, Some(e.clone())) {
+                    let _ = app.emit(APP_ERROR, format!("Outbound «{}»: {e}", w.name));
                 }
-                return None;
             }
         }
     }
-    slot.as_ref().map(|t| (t.outbound_id, t.endpoint.clone()))
+    state.keep_tunnel_errors(&wanted.iter().map(|w| w.id).collect::<Vec<_>>());
+    running
+        .iter()
+        .map(|(id, t)| (*id, t.endpoint.clone()))
+        .collect()
 }
 
-/// Brings back a tunnel that died or never came up (no network yet at
+/// Brings back tunnels that died or never came up (no network yet at
 /// logon, server down, a new address after a reconnect) and points the
-/// running proxy at it. Called by the health monitor.
-pub async fn revive_tunnel(app: &AppHandle, state: &AppState) {
+/// running proxy at them. Called by the health monitor.
+pub async fn revive_tunnels(app: &AppHandle, state: &AppState) {
     let config = state.config().clone();
     let slot = state.proxy.lock().await;
     let Some(server) = slot.as_ref() else {
         return;
     };
-    let tunnel = sync_tunnel(app, state, &config).await;
-    server.update(&effective_config(state, &config, tunnel));
+    let with_presets = crate::presets::effective(&config, &state.presets().file);
+    let tunnels = sync_tunnels(app, state, crate::tunnel::wanted(&with_presets)).await;
+    server.update(&with_tunnels(with_presets, &tunnels));
 }
 
 async fn apply_system(state: &AppState, desired: Desired) -> Result<(), String> {

@@ -1,5 +1,6 @@
 //! Application configuration: model, defaults, load and atomic save.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,9 @@ pub struct Config {
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
+    /// Outbound per selected preset; a preset not listed uses the default.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub preset_outbounds: BTreeMap<String, Uuid>,
     /// Ids of the domain presets the user subscribed to. Their entries are
     /// added to the rules at runtime from the current preset list, so preset
     /// updates apply by themselves; they are never copied into `rules`.
@@ -54,6 +58,7 @@ impl Default for Config {
             outbounds: Vec::new(),
             rules: Vec::new(),
             presets: Vec::new(),
+            preset_outbounds: BTreeMap::new(),
         }
     }
 }
@@ -134,6 +139,9 @@ pub struct Rule {
     pub action: RuleAction,
     #[serde(default)]
     pub comment: String,
+    /// Where a proxy rule sends traffic; `None` means the default outbound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outbound: Option<Uuid>,
 }
 
 fn default_true() -> bool {
@@ -249,9 +257,48 @@ impl Config {
         fs::rename(&tmp, path).map_err(write_err)
     }
 
+    /// The default outbound: for proxy rules without one of their own.
     pub fn active_outbound(&self) -> Option<&Outbound> {
         let id = self.active_outbound_id?;
         self.outbounds.iter().find(|o| o.id == id)
+    }
+
+    pub fn outbound(&self, id: Uuid) -> Option<&Outbound> {
+        self.outbounds.iter().find(|o| o.id == id)
+    }
+
+    /// Outbounds traffic can go to: the default one and those enabled proxy
+    /// rules name. Call it on the config with presets expanded.
+    pub fn used_outbounds(&self) -> Vec<&Outbound> {
+        let mut ids: Vec<Uuid> = self.active_outbound().map(|o| o.id).into_iter().collect();
+        for rule in &self.rules {
+            if let Some(id) = rule.outbound
+                && rule.enabled
+                && rule.action == RuleAction::Proxy
+                && !ids.contains(&id)
+            {
+                ids.push(id);
+            }
+        }
+        ids.into_iter().filter_map(|id| self.outbound(id)).collect()
+    }
+
+    /// Rules and presets pointing at a deleted outbound go back to the
+    /// default one; returns how many were changed.
+    pub fn forget_missing_outbounds(&mut self) -> usize {
+        let known: Vec<Uuid> = self.outbounds.iter().map(|o| o.id).collect();
+        let mut changed = 0;
+        for rule in &mut self.rules {
+            if rule.outbound.is_some_and(|id| !known.contains(&id)) {
+                rule.outbound = None;
+                changed += 1;
+            }
+        }
+        let before = self.preset_outbounds.len();
+        let presets = &self.presets;
+        self.preset_outbounds
+            .retain(|preset, id| known.contains(id) && presets.contains(preset));
+        changed + before - self.preset_outbounds.len()
     }
 }
 
@@ -301,10 +348,38 @@ mod tests {
                 match_type: MatchType::DomainAndSubdomains,
                 action: RuleAction::Proxy,
                 comment: String::new(),
+                outbound: None,
             }],
             presets: vec!["youtube".into()],
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn used_outbounds_and_forgetting_deleted_ones() {
+        let mut config = sample();
+        let (office, vpn) = (config.outbounds[0].id, config.outbounds[2].id);
+        assert_eq!(config.used_outbounds().len(), 1, "only the default one");
+        config.rules[0].outbound = Some(vpn);
+        let mut off = config.rules[0].clone();
+        off.id = Uuid::new_v4();
+        off.enabled = false;
+        off.outbound = Some(config.outbounds[1].id);
+        config.rules.push(off);
+        let used: Vec<_> = config.used_outbounds().iter().map(|o| o.id).collect();
+        assert_eq!(used, [office, vpn], "disabled rules do not count");
+
+        config.preset_outbounds.insert("youtube".into(), vpn);
+        config.preset_outbounds.insert("unselected".into(), vpn);
+        config.outbounds.retain(|o| o.id != vpn);
+        assert_eq!(
+            config.forget_missing_outbounds(),
+            3,
+            "a rule and two presets"
+        );
+        assert_eq!(config.rules[0].outbound, None);
+        assert!(config.preset_outbounds.is_empty());
+        assert_eq!(config.forget_missing_outbounds(), 0);
     }
 
     #[test]

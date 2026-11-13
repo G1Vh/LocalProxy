@@ -15,7 +15,10 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
+use uuid::Uuid;
+
 use crate::config::{OnOutboundDown, RuleAction};
+use crate::matcher::Decision;
 use crate::outbound::{Upstream, socks5_addr, socks5_udp_associate};
 use crate::router::{Inbound, RouteKind, Router, SELF_LOOP, Snapshot};
 use crate::stream::TargetAddr;
@@ -50,8 +53,8 @@ pub(crate) async fn associate(mut control: TcpStream, router: Arc<Router>) {
         tx,
         tasks: JoinSet::new(),
         direct: [None, None],
-        upstream: None,
-        upstream_error: None,
+        upstreams: HashMap::new(),
+        upstream_errors: HashMap::new(),
         seen: HashSet::new(),
         flows: HashMap::new(),
         replies: Arc::default(),
@@ -98,12 +101,13 @@ struct Association {
     tasks: JoinSet<()>,
     /// Direct sockets: [IPv4, IPv6].
     direct: [Option<Arc<UdpSocket>>; 2],
-    upstream: Option<UpstreamAssoc>,
+    /// One association per outbound in use.
+    upstreams: HashMap<Uuid, UpstreamAssoc>,
     /// Why the outbound cannot carry UDP; not retried within this association.
-    upstream_error: Option<String>,
+    upstream_errors: HashMap<Uuid, String>,
     seen: HashSet<(String, u16)>,
     /// Traffic counters per destination and route.
-    flows: HashMap<(String, u16, bool), Arc<Counters>>,
+    flows: HashMap<(String, u16, Option<Uuid>), Arc<Counters>>,
     /// Lets reply readers find whose traffic a reply is.
     replies: Arc<Mutex<Replies>>,
 }
@@ -135,7 +139,7 @@ impl Replies {
 
 enum Path {
     Direct,
-    Upstream,
+    Upstream(Uuid),
     Drop,
 }
 
@@ -146,69 +150,102 @@ impl Association {
         };
         let snap = self.router.snapshot();
         let decision = snap.rules.decide(&target.host);
+        let mut outbound_id = None;
         let (path, route, error) = match decision.action {
             RuleAction::Direct => (Path::Direct, RouteKind::Direct, None),
-            RuleAction::Proxy => match self.ensure_upstream(&snap).await {
-                Ok(()) => (Path::Upstream, RouteKind::Proxy, None),
-                Err(reason) => match snap.on_down {
-                    OnOutboundDown::Block => (Path::Drop, RouteKind::Blocked, Some(reason)),
-                    OnOutboundDown::Direct => (Path::Direct, RouteKind::Fallback, Some(reason)),
-                },
-            },
+            RuleAction::Proxy => {
+                let (id, ready) = self.ensure_upstream(&snap, &decision).await;
+                outbound_id = id;
+                match (id, ready) {
+                    (Some(id), Ok(())) => (Path::Upstream(id), RouteKind::Proxy, None),
+                    (_, ready) => {
+                        let reason = ready.err().unwrap_or_default();
+                        match snap.on_down {
+                            OnOutboundDown::Block => (Path::Drop, RouteKind::Blocked, Some(reason)),
+                            OnOutboundDown::Direct => {
+                                (Path::Direct, RouteKind::Fallback, Some(reason))
+                            }
+                        }
+                    }
+                }
+            }
         };
 
         if self.seen.len() >= MAX_SEEN {
             self.seen.clear();
         }
         if self.seen.insert((target.host.clone(), target.port)) {
-            self.router
-                .emit(Inbound::Udp, &target, route, decision.rule_id, error);
+            self.router.emit(
+                Inbound::Udp,
+                &target,
+                route,
+                decision.rule_id,
+                outbound_id,
+                error,
+            );
         }
 
         if matches!(path, Path::Drop) {
             return;
         }
-        let via_outbound = matches!(path, Path::Upstream);
+        let via = match path {
+            Path::Upstream(id) => Some(id),
+            _ => None,
+        };
         if self.flows.len() >= MAX_SEEN {
             self.flows.clear();
         }
         let counters = self
             .flows
-            .entry((target.host.clone(), target.port, via_outbound))
-            .or_insert_with(|| self.router.traffic().open_udp(&target.host, via_outbound))
+            .entry((target.host.clone(), target.port, via))
+            .or_insert_with(|| self.router.traffic().open_udp(&target.host, via))
             .clone();
         counters.add_up(payload.len());
         match path {
             Path::Direct => self.send_direct(&target, payload, counters).await,
-            Path::Upstream => self.send_upstream(&target, payload, counters).await,
+            Path::Upstream(id) => self.send_upstream(id, &target, payload, counters).await,
             Path::Drop => {}
         }
     }
 
-    async fn ensure_upstream(&mut self, snap: &Snapshot) -> Result<(), String> {
-        if self.upstream.is_some() {
-            return Ok(());
+    /// The decision's outbound, with its association opened if it can be.
+    async fn ensure_upstream(
+        &mut self,
+        snap: &Snapshot,
+        decision: &Decision,
+    ) -> (Option<Uuid>, Result<(), String>) {
+        let (id, upstream) = snap.outbound_for(decision);
+        let Some(id) = id else {
+            return (None, upstream.map(|_| ()));
+        };
+        if self.upstreams.contains_key(&id) {
+            return (Some(id), Ok(()));
         }
-        if let Some(e) = &self.upstream_error {
-            return Err(e.clone());
+        if let Some(e) = self.upstream_errors.get(&id) {
+            return (Some(id), Err(e.clone()));
         }
-        let result = match &snap.upstream {
-            None => Err("outbound не выбран".to_owned()),
-            Some(u) if u.points_to(self.router.port()) => Err(SELF_LOOP.to_owned()),
-            Some(Upstream::Socks5(ep)) => match socks5_udp_associate(ep).await {
-                Ok((control, relay)) => self.open_upstream(control, relay).await,
+        let result = match upstream {
+            Err(e) => Err(e),
+            Ok(u) if u.points_to(self.router.port()) => Err(SELF_LOOP.to_owned()),
+            Ok(Upstream::Socks5(ep)) => match socks5_udp_associate(ep).await {
+                Ok((control, relay)) => self.open_upstream(id, control, relay).await,
                 Err(e) => Err(e.to_string()),
             },
-            Some(Upstream::Http(_)) => Err("UDP через HTTP-прокси не передаётся".to_owned()),
-            Some(Upstream::Tunnel) => Err("туннель не подключён".to_owned()),
+            Ok(Upstream::Http(_)) => Err("UDP через HTTP-прокси не передаётся".to_owned()),
+            Ok(Upstream::Tunnel) => Err("туннель не подключён".to_owned()),
         };
         if let Err(e) = &result {
-            self.upstream_error = Some(e.clone());
+            self.upstream_errors.insert(id, e.clone());
         }
-        result
+        (Some(id), result)
     }
 
-    async fn open_upstream(&mut self, control: TcpStream, relay: SocketAddr) -> Result<(), String> {
+    async fn open_upstream(
+        &mut self,
+        id: Uuid,
+        control: TcpStream,
+        relay: SocketAddr,
+    ) -> Result<(), String> {
         let any: SocketAddr = if relay.is_ipv4() {
             (Ipv4Addr::UNSPECIFIED, 0).into()
         } else {
@@ -236,21 +273,27 @@ impl Association {
                 }
             }
         });
-        self.upstream = Some(UpstreamAssoc {
-            _control: control,
-            socket,
-            relay,
-        });
+        self.upstreams.insert(
+            id,
+            UpstreamAssoc {
+                _control: control,
+                socket,
+                relay,
+            },
+        );
         Ok(())
     }
 
     async fn send_upstream(
         &mut self,
+        id: Uuid,
         target: &TargetAddr,
         payload: &[u8],
         counters: Arc<Counters>,
     ) {
-        let Some(up) = &self.upstream else { return };
+        let Some(up) = self.upstreams.get(&id) else {
+            return;
+        };
         {
             let mut replies = lock(&self.replies);
             if replies.by_target.len() >= MAX_SEEN {

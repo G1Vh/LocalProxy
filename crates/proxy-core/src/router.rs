@@ -1,5 +1,6 @@
 //! Decides where a connection goes and opens it, applying the on-outbound-down policy.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,7 +10,7 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::config::{Config, OnOutboundDown, RuleAction};
-use crate::matcher::RuleSet;
+use crate::matcher::{Decision, RuleSet};
 use crate::outbound::{ConnectError, Upstream, basic_auth, connect_direct, connect_server};
 use crate::pac;
 use crate::stream::{BoxIo, TargetAddr};
@@ -26,7 +27,10 @@ pub const SELF_LOOP: &str =
 #[derive(Debug)]
 pub struct Snapshot {
     pub rules: RuleSet,
-    pub upstream: Option<Upstream>,
+    /// Every configured outbound.
+    pub upstreams: HashMap<Uuid, Upstream>,
+    /// For proxy rules without an outbound of their own.
+    pub default_outbound: Option<Uuid>,
     pub on_down: OnOutboundDown,
     pub socks5_enabled: bool,
     /// PAC script for the current rules.
@@ -44,11 +48,28 @@ impl Snapshot {
             pac_version: pac::version(&pac),
             pac,
             rules,
-            upstream: config
-                .active_outbound()
-                .map(|o| Upstream::from_kind(&o.kind)),
+            upstreams: config
+                .outbounds
+                .iter()
+                .map(|o| (o.id, Upstream::from_kind(&o.kind)))
+                .collect(),
+            default_outbound: config.active_outbound().map(|o| o.id),
             on_down: config.on_outbound_down,
             socks5_enabled: config.socks5_enabled,
+        }
+    }
+}
+
+impl Snapshot {
+    /// The outbound a proxy decision goes through: the rule's own, else the
+    /// default one. The error is the reason it cannot be used.
+    pub fn outbound_for(&self, decision: &Decision) -> (Option<Uuid>, Result<&Upstream, String>) {
+        let Some(id) = decision.outbound.or(self.default_outbound) else {
+            return (None, Err("outbound не выбран".into()));
+        };
+        match self.upstreams.get(&id) {
+            Some(upstream) => (Some(id), Ok(upstream)),
+            None => (Some(id), Err("outbound правила удалён".into())),
         }
     }
 }
@@ -88,6 +109,8 @@ pub struct ConnEvent {
     pub port: u16,
     pub route: RouteKind,
     pub rule_id: Option<Uuid>,
+    /// The outbound a proxy rule sent it to (or tried to).
+    pub outbound_id: Option<Uuid>,
     pub error: Option<String>,
 }
 
@@ -171,6 +194,7 @@ impl Router {
         target: &TargetAddr,
         route: RouteKind,
         rule_id: Option<Uuid>,
+        outbound_id: Option<Uuid>,
         error: Option<String>,
     ) {
         // No subscribers is fine.
@@ -181,6 +205,7 @@ impl Router {
             port: target.port,
             route,
             rule_id,
+            outbound_id,
             error,
         });
     }
@@ -210,15 +235,18 @@ impl Router {
         let snap = self.snapshot();
         let decision = snap.rules.decide(&target.host);
 
+        let mut outbound_id = None;
         let result = match decision.action {
             RuleAction::Direct => direct(target, RouteKind::Direct).await,
             RuleAction::Proxy => {
-                let attempt = match &snap.upstream {
-                    None => Err(ConnectError::OutboundDown("outbound не выбран".into())),
-                    Some(upstream) if upstream.points_to(self.port) => {
+                let (id, upstream) = snap.outbound_for(&decision);
+                outbound_id = id;
+                let attempt = match upstream {
+                    Err(reason) => Err(ConnectError::OutboundDown(reason)),
+                    Ok(upstream) if upstream.points_to(self.port) => {
                         Err(ConnectError::OutboundDown(SELF_LOOP.into()))
                     }
-                    Some(Upstream::Http(ep)) if plain_http => {
+                    Ok(Upstream::Http(ep)) if plain_http => {
                         connect_server(ep).await.map(|s| -> (BoxIo, HttpHop) {
                             (
                                 Box::new(s),
@@ -228,7 +256,7 @@ impl Router {
                             )
                         })
                     }
-                    Some(upstream) => upstream
+                    Ok(upstream) => upstream
                         .connect(target)
                         .await
                         .map(|io| (io, HttpHop::Origin)),
@@ -253,10 +281,11 @@ impl Router {
             Err(e @ RouteError::Failed(_)) => (RouteKind::Failed, Some(e.to_string())),
         };
         tracing::debug!(%target, ?inbound, ?route, error = error.as_deref().unwrap_or(""), "route");
-        self.emit(inbound, target, route, decision.rule_id, error);
+        self.emit(inbound, target, route, decision.rule_id, outbound_id, error);
 
         result.map(|((io, hop), route)| {
-            let counters = self.traffic.open(&target.host, route == RouteKind::Proxy);
+            let via = outbound_id.filter(|_| route == RouteKind::Proxy);
+            let counters = self.traffic.open(&target.host, via);
             (Box::new(Counted::new(io, counters)) as BoxIo, hop)
         })
     }

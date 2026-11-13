@@ -36,6 +36,8 @@ export interface Rule {
   matchType: MatchType;
   action: RuleAction;
   comment: string;
+  /** For proxy rules: their own outbound; absent means the default one. */
+  outbound?: string | null;
 }
 
 export interface Config {
@@ -47,11 +49,14 @@ export interface Config {
   onOutboundDown: OnOutboundDown;
   notifications: boolean;
   checkUpdates: boolean;
+  /** The default outbound: for proxy rules without one of their own. */
   activeOutboundId: string | null;
   outbounds: Outbound[];
   rules: Rule[];
   /** Ids of selected presets; their entries apply from the current preset list. */
   presets: string[];
+  /** Outbound per selected preset; a preset not listed uses the default. */
+  presetOutbounds?: Record<string, string>;
 }
 
 export interface AppInfo {
@@ -72,6 +77,8 @@ export interface ConnEvent {
   port: number;
   route: RouteKind;
   ruleId: string | null;
+  /** The outbound a proxy rule sent it to (or tried to). */
+  outboundId: string | null;
   error: string | null;
 }
 
@@ -89,6 +96,7 @@ export interface HostCheck {
   host: string;
   action: RuleAction;
   ruleId: string | null;
+  outboundId: string | null;
 }
 
 export interface MergeReport {
@@ -138,6 +146,12 @@ export interface TunnelStatus {
   tx: number;
 }
 
+/** Overall verdict plus one per outbound in use (only "up" / "down" there). */
+export interface HealthState {
+  overall: Health;
+  outbounds: Record<string, Health>;
+}
+
 export type Health =
   | { state: "off" }
   | { state: "noOutbound" }
@@ -147,6 +161,7 @@ export type Health =
 export interface HostTraffic {
   host: string;
   viaOutbound: boolean;
+  outboundId: string | null;
   udp: boolean;
   up: number;
   down: number;

@@ -112,6 +112,7 @@ mod tests {
             match_type,
             action,
             comment: String::new(),
+            outbound: None,
         }
     }
 

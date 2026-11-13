@@ -54,6 +54,7 @@ pub fn add_lines(config: &mut Config, text: &str) -> MergeReport {
             match_type,
             action: RuleAction::Proxy,
             comment: String::new(),
+            outbound: None,
         };
         merge_one(config, rule, &mut report);
     }
@@ -126,6 +127,7 @@ pub fn import(config: &mut Config, text: &str) -> MergeReport {
             match_type: r.match_type,
             action: r.action,
             comment: r.comment,
+            outbound: None,
         };
         merge_one(config, rule, &mut report);
     }

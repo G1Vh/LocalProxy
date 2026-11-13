@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -5,9 +6,10 @@ use anyhow::Context;
 use proxy_core::traffic::Traffic;
 use proxy_core::{Config, ProxyServer};
 use tokio::sync::Notify;
+use uuid::Uuid;
 
 use crate::events::RuleStats;
-use crate::health::Health;
+use crate::health::HealthState;
 use crate::presets::{self, PresetsFile, Source};
 use crate::system::SystemProxy;
 
@@ -28,19 +30,19 @@ pub struct AppState {
     pub proxy: tokio::sync::Mutex<Option<ProxyServer>>,
     /// Windows proxy settings and environment variables.
     pub system: SystemProxy,
-    /// The tunnel process, while the active outbound needs one.
-    pub tunnel: tokio::sync::Mutex<Option<crate::tunnel::TunnelProcess>>,
+    /// Tunnel processes by outbound id, for the tunnel outbounds in use.
+    pub tunnels: tokio::sync::Mutex<HashMap<Uuid, crate::tunnel::TunnelProcess>>,
     /// Lasting problems found at startup (e.g. a broken config file).
     pub warnings: Vec<String>,
     /// Why the proxy could not start; cleared once it starts.
     start_error: Mutex<Option<String>>,
-    /// Why the tunnel process could not start; cleared once it runs.
-    tunnel_error: Mutex<Option<String>>,
+    /// Why a tunnel could not start, by outbound id; cleared once it runs.
+    tunnel_errors: Mutex<HashMap<Uuid, String>>,
     /// Hits per rule since the app started.
     rule_stats: Mutex<RuleStats>,
     presets: Mutex<PresetsState>,
-    /// Whether the active outbound works; see [`crate::health`].
-    health: Mutex<Health>,
+    /// Whether the outbounds in use work; see [`crate::health`].
+    health: Mutex<HealthState>,
     /// Wakes the health monitor for an immediate check.
     pub health_poke: Arc<Notify>,
     /// Bytes per host since the app started; survives proxy restarts.
@@ -72,19 +74,19 @@ impl AppState {
             config: Mutex::new(config),
             proxy: tokio::sync::Mutex::new(None),
             system: SystemProxy::new(&dir),
-            tunnel: tokio::sync::Mutex::new(None),
+            tunnels: tokio::sync::Mutex::default(),
             warnings,
             start_error: Mutex::new(None),
-            tunnel_error: Mutex::new(None),
+            tunnel_errors: Mutex::default(),
             rule_stats: Mutex::new(RuleStats::new()),
-            health: Mutex::new(Health::Off),
+            health: Mutex::default(),
             health_poke: Arc::new(Notify::new()),
             traffic: Arc::default(),
             dir,
         })
     }
 
-    pub fn health(&self) -> MutexGuard<'_, Health> {
+    pub fn health(&self) -> MutexGuard<'_, HealthState> {
         self.health.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -108,19 +110,30 @@ impl AppState {
         *self.start_error.lock().unwrap_or_else(|e| e.into_inner()) = error;
     }
 
-    pub fn tunnel_error(&self) -> Option<String> {
-        self.tunnel_error
+    pub fn tunnel_error(&self, id: Uuid) -> Option<String> {
+        self.tunnel_errors
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clone()
+            .get(&id)
+            .cloned()
     }
 
     /// Returns whether the error changed.
-    pub fn set_tunnel_error(&self, error: Option<String>) -> bool {
-        let mut current = self.tunnel_error.lock().unwrap_or_else(|e| e.into_inner());
-        let changed = *current != error;
-        *current = error;
-        changed
+    pub fn set_tunnel_error(&self, id: Uuid, error: Option<String>) -> bool {
+        let mut errors = self.tunnel_errors.lock().unwrap_or_else(|e| e.into_inner());
+        let previous = match error {
+            Some(e) => errors.insert(id, e.clone()).filter(|p| *p == e),
+            None => return errors.remove(&id).is_some(),
+        };
+        previous.is_none()
+    }
+
+    /// Forgets errors of tunnels no longer wanted.
+    pub fn keep_tunnel_errors(&self, wanted: &[Uuid]) {
+        self.tunnel_errors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|id, _| wanted.contains(id));
     }
 
     pub fn rule_stats(&self) -> MutexGuard<'_, RuleStats> {

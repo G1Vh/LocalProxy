@@ -5,7 +5,7 @@ import type {
   AppInfo,
   Config,
   ConnEvent,
-  Health,
+  HealthState,
   PresetsInfo,
   ProxyExtension,
   RuleStat,
@@ -30,7 +30,7 @@ class Store {
   busy = $state(false);
   /** Browser extensions that override the proxy (the browser then ignores our PAC). */
   browserWarnings = $state<ProxyExtension[]>([]);
-  health = $state<Health>({ state: "off" });
+  health = $state<HealthState>({ overall: { state: "off" }, outbounds: {} });
   /** A newer version on GitHub, once found. */
   newVersion = $state<UpdateInfo | null>(null);
   /** Set while the update downloads. */
@@ -129,6 +129,11 @@ class Store {
   }
 
   /** "openai.com" for a user rule, "YouTube: youtube.com" for a preset entry. */
+  outboundName(id: string | null | undefined): string | null {
+    if (!id) return null;
+    return this.config?.outbounds.find((o) => o.id === id)?.name ?? null;
+  }
+
   ruleLabel(id: string | null): string | null {
     if (!id) return null;
     const rule = this.config?.rules.find((r) => r.id === id);

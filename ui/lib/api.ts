@@ -4,7 +4,7 @@ import type {
   AppInfo,
   Config,
   ConnEvent,
-  Health,
+  HealthState,
   HostCheck,
   HostTraffic,
   MatchType,
@@ -38,8 +38,8 @@ export const setPresetSelected = (id: string, selected: boolean) =>
   invoke<Config>("set_preset_selected", { id, selected });
 export const exportRules = (path: string) => invoke<number>("export_rules", { path });
 export const getBrowserWarnings = () => invoke<ProxyExtension[]>("get_browser_warnings");
-export const getTunnelStatus = () => invoke<TunnelStatus | null>("get_tunnel_status");
-export const getHealth = () => invoke<Health>("get_health");
+export const getTunnelStatus = () => invoke<TunnelStatus[]>("get_tunnel_status");
+export const getHealth = () => invoke<HealthState>("get_health");
 export const getTraffic = () => invoke<HostTraffic[]>("get_traffic");
 export const resetTraffic = () => invoke<void>("reset_traffic");
 export const checkUpdate = () => invoke<UpdateInfo | null>("check_update");
@@ -63,8 +63,8 @@ export const onConnEvents = (handler: (events: ConnEvent[]) => void): Promise<Un
 export const onPresetsChanged = (handler: (info: PresetsInfo) => void): Promise<UnlistenFn> =>
   listen<PresetsInfo>("presets-changed", (event) => handler(event.payload));
 
-export const onHealth = (handler: (health: Health) => void): Promise<UnlistenFn> =>
-  listen<Health>("outbound-health", (event) => handler(event.payload));
+export const onHealth = (handler: (health: HealthState) => void): Promise<UnlistenFn> =>
+  listen<HealthState>("outbound-health", (event) => handler(event.payload));
 
 export const onUpdateAvailable = (handler: (info: UpdateInfo) => void): Promise<UnlistenFn> =>
   listen<UpdateInfo>("update-available", (event) => handler(event.payload));

@@ -20,7 +20,7 @@ struct TrayItems {
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let enabled = app.state::<AppState>().config().enabled;
-    let health = app.state::<AppState>().health().clone();
+    let health = app.state::<AppState>().health().overall.clone();
 
     let open = MenuItem::with_id(app, MENU_OPEN, "Открыть LocalProxy", true, None::<&str>)?;
     let toggle = CheckMenuItem::with_id(
@@ -100,7 +100,7 @@ fn tooltip(health: &Health) -> String {
         Health::Off => "LocalProxy — выключен".to_owned(),
         Health::Up => "LocalProxy — включён, outbound работает".to_owned(),
         Health::NoOutbound => "LocalProxy — outbound не выбран".to_owned(),
-        Health::Down { reason } => format!("LocalProxy — outbound недоступен: {reason}"),
+        Health::Down { reason } => format!("LocalProxy — недоступно: {reason}"),
     };
     text.chars().take(120).collect()
 }

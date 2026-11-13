@@ -90,6 +90,7 @@ pub fn effective(config: &Config, file: &PresetsFile) -> Config {
             tracing::warn!(preset = %id, "selected preset is not in the list any more");
             continue;
         };
+        let outbound = config.preset_outbounds.get(id).copied();
         effective
             .rules
             .extend(preset.entries().into_iter().map(|e| Rule {
@@ -99,6 +100,7 @@ pub fn effective(config: &Config, file: &PresetsFile) -> Config {
                 match_type: e.match_type,
                 action: RuleAction::Proxy,
                 comment: String::new(),
+                outbound,
             }));
     }
     effective
@@ -235,6 +237,18 @@ mod tests {
             ["youtube.com", "youtu.be", "149.154.160.0/20"]
         );
         assert_eq!(new.rules[2].match_type, MatchType::Cidr);
+        assert!(
+            new.rules.iter().all(|r| r.outbound.is_none()),
+            "default outbound"
+        );
+        let vpn = uuid::Uuid::new_v4();
+        config.preset_outbounds.insert("yt".into(), vpn);
+        let routed = effective(&config, &preset(&["youtube.com"]));
+        assert_eq!(
+            routed.rules[0].outbound,
+            Some(vpn),
+            "the preset's own outbound"
+        );
         assert_eq!(
             old.rules[0].id, new.rules[0].id,
             "ids are stable across updates"

@@ -71,7 +71,12 @@
           {@const route = ROUTES[e.route]}
           <tr>
             <td class="c-time hint mono">{time(e.atMs)}</td>
-            <td class="c-route"><span class="pill {route.css}">{route.label}</span></td>
+            <td class="c-route">
+            <span class="pill {route.css}">{route.label}</span>
+            {#if e.outboundId && e.route !== "direct"}
+              <span class="hint">{store.outboundName(e.outboundId) ?? ""}</span>
+            {/if}
+          </td>
             <td class="c-in hint">{inbound[e.inbound]}</td>
             <td class="c-host">
               <span class="mono">{e.host}:{e.port}</span>

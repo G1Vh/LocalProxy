@@ -224,6 +224,7 @@ fn rule(pattern: &str, action: RuleAction) -> Rule {
         match_type: MatchType::Exact,
         action,
         comment: String::new(),
+        outbound: None,
     }
 }
 
@@ -1003,4 +1004,80 @@ async fn traffic_is_counted_live_per_host_and_route() {
 
     traffic.reset();
     assert!(traffic.snapshot().is_empty());
+}
+
+#[tokio::test]
+async fn each_rule_goes_through_its_own_outbound() {
+    let echo = echo_server().await;
+    let (default_port, default_seen) = fake_http_upstream(None).await;
+    let (office_port, office_seen) = fake_http_upstream(None).await;
+    let dead = dead_upstream().await;
+    let outbound = |name: &str, port: u16| Outbound {
+        id: Uuid::new_v4(),
+        name: name.into(),
+        kind: OutboundKind::Http(endpoint(port)),
+    };
+    let (default, office, down) = (
+        outbound("default", default_port),
+        outbound("office", office_port),
+        outbound("down", dead),
+    );
+    let with = |pattern: &str, outbound: Option<Uuid>| Rule {
+        outbound,
+        ..rule(pattern, RuleAction::Proxy)
+    };
+    let config = Config {
+        port: 0,
+        enabled: true,
+        active_outbound_id: Some(default.id),
+        rules: vec![
+            with("a.test", None),
+            with("b.test", Some(office.id)),
+            with("c.test", Some(down.id)),
+            with("d.test", Some(Uuid::new_v4())),
+        ],
+        outbounds: vec![default.clone(), office.clone(), down.clone()],
+        ..Config::default()
+    };
+    let proxy = start(&config).await;
+    let mut events = proxy.subscribe();
+
+    for host in ["a.test", "b.test"] {
+        let (status, mut s) = http_connect(proxy.port(), &format!("{host}:{echo}")).await;
+        assert_eq!(status, 200, "{host}");
+        assert_echo(&mut s).await;
+    }
+    assert_eq!(
+        default_seen.lines(),
+        [format!("CONNECT a.test:{echo} HTTP/1.1")]
+    );
+    assert_eq!(
+        office_seen.lines(),
+        [format!("CONNECT b.test:{echo} HTTP/1.1")]
+    );
+    for host in ["c.test", "d.test"] {
+        let (status, _) = http_connect(proxy.port(), &format!("{host}:{echo}")).await;
+        assert_eq!(status, 403, "{host}: blocked, never sent elsewhere");
+    }
+
+    let seen: Vec<_> = (0..4).map(|_| events.try_recv().unwrap()).collect();
+    let by_host = |h: &str| seen.iter().find(|e| e.host == h).unwrap();
+    assert_eq!(by_host("a.test").outbound_id, Some(default.id));
+    assert_eq!(by_host("b.test").outbound_id, Some(office.id));
+    assert_eq!(
+        (by_host("c.test").route, by_host("c.test").outbound_id),
+        (RouteKind::Blocked, Some(down.id))
+    );
+    assert!(
+        by_host("d.test")
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("удалён")
+    );
+
+    let traffic = proxy.traffic().snapshot();
+    let row = |h: &str| traffic.iter().find(|r| r.host == h).unwrap();
+    assert_eq!(row("a.test").outbound_id, Some(default.id));
+    assert_eq!(row("b.test").outbound_id, Some(office.id));
 }

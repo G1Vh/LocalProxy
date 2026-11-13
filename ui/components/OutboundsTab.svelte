@@ -26,10 +26,10 @@
   const config = $derived(store.config!);
 
   // State of the running tunnel (WireGuard, SSTP), refreshed while the tab is open.
-  let tunnel = $state<TunnelStatus | null>(null);
+  let tunnels = $state<TunnelStatus[]>([]);
   onMount(() => {
     const poll = () =>
-      api.getTunnelStatus().then((s) => (tunnel = s)).catch(() => (tunnel = null));
+      api.getTunnelStatus().then((s) => (tunnels = s)).catch(() => (tunnels = []));
     poll();
     const timer = setInterval(poll, 3000);
     return () => clearInterval(timer);
@@ -152,11 +152,30 @@
     if (!store.error) draft = null;
   }
 
-  function remove(o: Outbound) {
-    store.update((c) => {
+  /** Rules and presets that name this outbound. */
+  function usage(o: Outbound) {
+    const rules = config.rules.filter((r) => r.action === "proxy" && r.outbound === o.id).length;
+    const presets = Object.entries(config.presetOutbounds ?? {}).filter(
+      ([p, id]) => id === o.id && config.presets.includes(p),
+    ).length;
+    return { rules, presets };
+  }
+
+  function usageText(o: Outbound) {
+    const { rules, presets } = usage(o);
+    const parts = [];
+    if (rules) parts.push(`правил: ${rules}`);
+    if (presets) parts.push(`наборов: ${presets}`);
+    return parts.join(", ");
+  }
+
+  async function remove(o: Outbound) {
+    const moved = usageText(o);
+    await store.update((c) => {
       c.outbounds = c.outbounds.filter((x) => x.id !== o.id);
       if (c.activeOutboundId === o.id) c.activeOutboundId = c.outbounds[0]?.id ?? null;
     });
+    if (moved && !store.error) store.say(`«${o.name}» удалён; ${moved} теперь идут через outbound по умолчанию`);
   }
 
   async function test(o: Outbound) {
@@ -216,8 +235,8 @@
 <div class="stack">
   <div class="toolbar">
     <span class="hint">
-      Через активный outbound идут все домены из правил и наборов. Активный выбирается вверху окна или
-      здесь.
+      Правила и наборы идут через outbound по умолчанию (отмечен кружком, выбирается и вверху окна) или
+      через свой, если он указан в правиле. Подключены одновременно все используемые.
     </span>
     <span class="spacer"></span>
     <button class="primary" onclick={startNew} disabled={!!draft}>Добавить outbound</button>
@@ -321,19 +340,29 @@
 
   {#each config.outbounds as o (o.id)}
     {@const active = config.activeOutboundId === o.id}
+    {@const health = config.enabled ? store.health.outbounds[o.id] : undefined}
+    {@const tunnel = tunnels.find((t) => t.outboundId === o.id)}
     <div class="card item" class:active>
       <label class="radio">
         <input
           type="radio"
           name="active-outbound"
+          title="Outbound по умолчанию: для правил и наборов без своего"
           checked={active}
           onchange={() => store.update((c) => (c.activeOutboundId = o.id))}
         />
         <span class="name">{o.name}</span>
+        {#if active}<span class="hint">по умолчанию</span>{/if}
       </label>
       <span class="pill">{typeLabel[o.type]}</span>
       <span class="hint mono">{address(o)}</span>
-      {#if tunnel?.outboundId === o.id}
+      {#if usageText(o)}<span class="hint" title="Правила и наборы с этим outbound">{usageText(o)}</span>{/if}
+      {#if health?.state === "up"}
+        <span class="pill ok">работает</span>
+      {:else if health?.state === "down"}
+        <span class="pill bad" title={health.reason}>недоступен</span>
+      {/if}
+      {#if tunnel}
         {@const ago = tunnel.lastHandshake ? Math.round(Date.now() / 1000 - tunnel.lastHandshake) : null}
         {@const fresh = ago !== null && ago < (o.type === "awg" ? 180 : 60)}
         <span class="pill {fresh ? 'ok' : 'warn'}" title="Состояние туннеля">
