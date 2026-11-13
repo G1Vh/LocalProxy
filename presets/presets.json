@@ -1,5 +1,5 @@
 {
-  "revision": 2,
+  "revision": 3,
   "presets": [
     {
       "id": "openai",
@@ -17,7 +17,8 @@
       "domains": [
         "anthropic.com",
         "claude.ai",
-        "claude.com"
+        "claude.com",
+        "claudeusercontent.com"
       ]
     },
     {
