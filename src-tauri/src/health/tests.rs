@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn event(inbound: Inbound, route: RouteKind, outbound: Uuid) -> ConnEvent {

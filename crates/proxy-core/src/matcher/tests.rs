@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn rule(pattern: &str, match_type: MatchType, action: RuleAction) -> Rule {
