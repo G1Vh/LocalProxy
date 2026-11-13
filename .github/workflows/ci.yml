@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, rewrite-tauri]
+    branches: [main]
   pull_request:
 
 concurrency:
