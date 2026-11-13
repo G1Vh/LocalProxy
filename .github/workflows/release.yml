@@ -2,7 +2,8 @@ name: Release
 
 # Push a tag `vX.Y.Z` matching the version in Cargo.toml. The installer,
 # its signature and latest.json (what installed copies check for updates)
-# go to a GitHub release of that tag.
+# go to a GitHub release of that tag; its notes are the version's section
+# of CHANGELOG.md.
 
 on:
   push:
@@ -25,6 +26,26 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
             exit 1
           fi
+
+      - name: Release notes from CHANGELOG.md
+        id: notes
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes=$(awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { lines[++n] = $0 }
+            END {
+              s = 1; while (s <= n && lines[s] ~ /^[[:space:]]*$/) s++
+              e = n; while (e >= s && lines[e] ~ /^[[:space:]]*$/) e--
+              for (i = s; i <= e; i++) print lines[i]
+            }' CHANGELOG.md)
+          if [ -z "$notes" ]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          { echo "body<<__NOTES__"; echo "$notes"; echo "__NOTES__"; } >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v6
 
@@ -61,7 +82,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: LocalProxy __VERSION__
-          generateReleaseNotes: true
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true
