@@ -24,8 +24,8 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version-file: awg-bridge/go.mod
-          cache-dependency-path: awg-bridge/go.sum
+          go-version-file: tunnel/go.mod
+          cache-dependency-path: tunnel/go.sum
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,11 +42,11 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
-      - name: Bridge (WireGuard/AmneziaWG) tests
-        run: pnpm test:bridge
+      - name: Tunnel (WireGuard/AmneziaWG, SSTP) tests
+        run: pnpm test:tunnel
 
-      - name: Build bridge
-        run: pnpm build:bridge
+      - name: Build tunnel
+        run: pnpm build:tunnel
 
       - name: Rustfmt
         run: cargo fmt --all --check

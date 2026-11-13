@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use proxy_core::config::{OnOutboundDown, OutboundKind};
+use proxy_core::config::{OnOutboundDown, ProxyEndpoint};
 use proxy_core::outbound::Upstream;
 use proxy_core::probe::health_check;
 use proxy_core::{ConnEvent, Inbound, RouteKind};
@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Notify;
 
+use crate::commands;
 use crate::state::AppState;
 use crate::tray;
 
@@ -69,16 +70,24 @@ async fn check(app: &AppHandle) -> Health {
     let Some(outbound) = config.active_outbound() else {
         return Health::NoOutbound;
     };
-    let upstream = match &outbound.kind {
-        OutboundKind::Awg { .. } => match state.awg.lock().await.as_ref() {
-            Some(bridge) => Upstream::Socks5(bridge.endpoint.clone()),
+    let upstream = if outbound.kind.is_tunnel() {
+        let mut endpoint = running_tunnel(&state).await;
+        if endpoint.is_none() {
+            commands::revive_tunnel(app, &state).await;
+            endpoint = running_tunnel(&state).await;
+        }
+        match endpoint {
+            Some(endpoint) => Upstream::Socks5(endpoint),
             None => {
                 return Health::Down {
-                    reason: "WireGuard/AmneziaWG не подключён".into(),
+                    reason: state
+                        .tunnel_error()
+                        .unwrap_or_else(|| "туннель не подключён".into()),
                 };
             }
-        },
-        kind => Upstream::from_kind(kind),
+        }
+    } else {
+        Upstream::from_kind(&outbound.kind)
     };
     if upstream.points_to(config.port) {
         return Health::Down {
@@ -89,6 +98,13 @@ async fn check(app: &AppHandle) -> Health {
         Ok(()) => Health::Up,
         Err(reason) => Health::Down { reason },
     }
+}
+
+/// SOCKS5 endpoint of the tunnel process, if it is alive.
+async fn running_tunnel(state: &AppState) -> Option<ProxyEndpoint> {
+    let mut slot = state.tunnel.lock().await;
+    let tunnel = slot.as_mut()?;
+    tunnel.is_alive().then(|| tunnel.endpoint.clone())
 }
 
 /// Real traffic between checks: a connection through the outbound proves it

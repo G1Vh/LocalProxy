@@ -87,6 +87,29 @@ pub enum OutboundKind {
     /// WireGuard / AmneziaWG tunnel; `config` is the full `.conf` text.
     /// Plain WireGuard configs work as is (AmneziaWG with obfuscation off).
     Awg { config: String },
+    /// SSTP VPN (Windows RRAS, MikroTik, SoftEther...): PPP inside HTTPS.
+    Sstp(SstpEndpoint),
+}
+
+impl OutboundKind {
+    /// Runs through a userspace tunnel process rather than a proxy server.
+    pub fn is_tunnel(&self) -> bool {
+        matches!(self, Self::Awg { .. } | Self::Sstp(_))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SstpEndpoint {
+    /// `host` or `host:port` (443 by default).
+    pub server: String,
+    pub username: String,
+    pub password: String,
+    /// SHA-256 of the server certificate to trust (a self-signed one); empty
+    /// means the Windows certificate store decides.
+    pub cert_sha256: String,
+    /// Do not check the certificate at all.
+    pub insecure: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -257,7 +280,20 @@ mod tests {
         Config {
             enabled: true,
             active_outbound_id: Some(office.id),
-            outbounds: vec![office, awg],
+            outbounds: vec![
+                office,
+                awg,
+                Outbound {
+                    id: Uuid::new_v4(),
+                    name: "Work VPN".into(),
+                    kind: OutboundKind::Sstp(SstpEndpoint {
+                        server: "vpn.example.com".into(),
+                        username: "alice".into(),
+                        password: "secret".into(),
+                        ..SstpEndpoint::default()
+                    }),
+                },
+            ],
             rules: vec![Rule {
                 id: Uuid::new_v4(),
                 enabled: true,
@@ -298,6 +334,9 @@ mod tests {
         assert_eq!(json["outbounds"][0]["type"], "http");
         assert_eq!(json["outbounds"][0]["host"], "10.20.0.5");
         assert_eq!(json["outbounds"][1]["type"], "awg");
+        assert_eq!(json["outbounds"][2]["type"], "sstp");
+        assert_eq!(json["outbounds"][2]["server"], "vpn.example.com");
+        assert_eq!(json["outbounds"][2]["certSha256"], "");
         assert_eq!(json["rules"][0]["matchType"], "domainAndSubdomains");
         assert_eq!(json["rules"][0]["action"], "proxy");
     }

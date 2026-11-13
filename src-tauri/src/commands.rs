@@ -1,3 +1,4 @@
+use proxy_core::config::{OutboundKind, ProxyEndpoint};
 use proxy_core::{Config, ProxyServer};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -120,20 +121,12 @@ pub async fn sync_runtime(
         if let Some(server) = slot.take() {
             server.stop().await;
         }
-        sync_awg(app, state, config).await;
+        sync_tunnel(app, state, config).await;
         return error;
     }
 
-    // The proxy runs on the user's rules plus the entries of selected presets,
-    // with a WireGuard/AmneziaWG outbound replaced by its bridge.
-    let mut effective = crate::presets::effective(config, &state.presets().file);
-    if let Some(bridge) = sync_awg(app, state, config).await {
-        effective
-            .outbounds
-            .iter_mut()
-            .filter(|o| o.id == bridge.0)
-            .for_each(|o| o.kind = proxy_core::config::OutboundKind::Socks5(bridge.1.clone()));
-    }
+    let tunnel = sync_tunnel(app, state, config).await;
+    let effective = effective_config(state, config, tunnel);
     let restart = slot.as_ref().is_none_or(|s| s.port() != config.port);
     if restart {
         if let Some(server) = slot.take() {
@@ -171,42 +164,85 @@ pub async fn sync_runtime(
     None
 }
 
-/// Starts, restarts or stops the WireGuard/AmneziaWG bridge so that it runs
-/// exactly when routing is on and the active outbound is an AWG profile.
-/// Returns the AWG outbound id and the bridge's SOCKS5 endpoint while it runs.
+/// The proxy runs on the user's rules plus the entries of selected presets,
+/// with a tunnel outbound (WireGuard, SSTP) replaced by its running tunnel.
+fn effective_config(
+    state: &AppState,
+    config: &Config,
+    tunnel: Option<(uuid::Uuid, ProxyEndpoint)>,
+) -> Config {
+    let mut effective = crate::presets::effective(config, &state.presets().file);
+    if let Some((id, endpoint)) = tunnel {
+        effective
+            .outbounds
+            .iter_mut()
+            .filter(|o| o.id == id)
+            .for_each(|o| o.kind = OutboundKind::Socks5(endpoint.clone()));
+    }
+    effective
+}
+
+/// Starts, restarts or stops the tunnel process so that it runs exactly
+/// when routing is on and the active outbound is a tunnel. Returns the
+/// outbound id and the tunnel's SOCKS5 endpoint while it runs.
 ///
-/// A bridge that fails to start does not switch routing off: the AWG outbound
-/// then counts as down (block or go direct, per policy) and the reason is
-/// shown in the window.
-async fn sync_awg(
+/// A tunnel that fails to start does not switch routing off: the outbound
+/// then counts as down (block or go direct, per policy), the reason is shown
+/// in the window, and the health monitor keeps trying.
+async fn sync_tunnel(
     app: &AppHandle,
     state: &AppState,
     config: &Config,
-) -> Option<(uuid::Uuid, proxy_core::config::ProxyEndpoint)> {
-    let wanted = config.enabled.then(|| crate::awg::wanted(config)).flatten();
-    let mut slot = state.awg.lock().await;
+) -> Option<(uuid::Uuid, ProxyEndpoint)> {
+    let wanted = config
+        .enabled
+        .then(|| crate::tunnel::wanted(config))
+        .flatten();
+    let mut slot = state.tunnel.lock().await;
 
-    let keep = match (&mut *slot, wanted) {
-        (Some(running), Some((id, conf))) => {
-            running.outbound_id == id && running.conf == conf && running.is_alive()
+    let keep = match (&mut *slot, &wanted) {
+        (Some(running), Some((id, spec))) => {
+            running.outbound_id == *id && running.spec == *spec && running.is_alive()
         }
         _ => false,
     };
     if !keep && let Some(old) = slot.take() {
         old.stop().await;
     }
-    let (id, conf) = wanted?;
+    let Some((id, spec)) = wanted else {
+        state.set_tunnel_error(None);
+        return None;
+    };
     if slot.is_none() {
-        match crate::awg::AwgProcess::start(id, conf).await {
-            Ok(bridge) => *slot = Some(bridge),
+        match crate::tunnel::TunnelProcess::start(id, &spec).await {
+            Ok(tunnel) => {
+                *slot = Some(tunnel);
+                state.set_tunnel_error(None);
+            }
             Err(e) => {
-                tracing::error!("awg-bridge: {e}");
-                let _ = app.emit(APP_ERROR, e);
+                tracing::error!("tunnel: {e}");
+                // Retries repeat the same error: show it once.
+                if state.set_tunnel_error(Some(e.clone())) {
+                    let _ = app.emit(APP_ERROR, e);
+                }
                 return None;
             }
         }
     }
-    slot.as_ref().map(|b| (b.outbound_id, b.endpoint.clone()))
+    slot.as_ref().map(|t| (t.outbound_id, t.endpoint.clone()))
+}
+
+/// Brings back a tunnel that died or never came up (no network yet at
+/// logon, server down, a new address after a reconnect) and points the
+/// running proxy at it. Called by the health monitor.
+pub async fn revive_tunnel(app: &AppHandle, state: &AppState) {
+    let config = state.config().clone();
+    let slot = state.proxy.lock().await;
+    let Some(server) = slot.as_ref() else {
+        return;
+    };
+    let tunnel = sync_tunnel(app, state, &config).await;
+    server.update(&effective_config(state, &config, tunnel));
 }
 
 async fn apply_system(state: &AppState, desired: Desired) -> Result<(), String> {

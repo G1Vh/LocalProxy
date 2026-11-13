@@ -72,8 +72,10 @@ pub async fn connect_direct(target: &TargetAddr) -> Result<TcpStream, ConnectErr
 pub enum Upstream {
     Http(ProxyEndpoint),
     Socks5(ProxyEndpoint),
-    /// Not wired up yet (stage 5): every attempt reports the outbound as down.
-    Awg,
+    /// A tunnel outbound (WireGuard, SSTP) whose tunnel process is not
+    /// running: every attempt reports the outbound as down. While it runs,
+    /// the app hands the core a SOCKS5 outbound pointing at it instead.
+    Tunnel,
 }
 
 impl Upstream {
@@ -81,7 +83,7 @@ impl Upstream {
         match kind {
             OutboundKind::Http(ep) => Self::Http(ep.clone()),
             OutboundKind::Socks5(ep) => Self::Socks5(ep.clone()),
-            OutboundKind::Awg { .. } => Self::Awg,
+            OutboundKind::Awg { .. } | OutboundKind::Sstp(_) => Self::Tunnel,
         }
     }
 
@@ -109,9 +111,7 @@ impl Upstream {
                 let stream = connect_server(ep).await?;
                 socks5_connect(stream, ep, target).await
             }
-            Self::Awg => Err(ConnectError::OutboundDown(
-                "WireGuard/AmneziaWG пока не поддерживается".into(),
-            )),
+            Self::Tunnel => Err(ConnectError::OutboundDown("туннель не подключён".into())),
         }
     }
 }

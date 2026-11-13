@@ -14,7 +14,18 @@ export interface ProxyEndpoint {
 export type OutboundKind =
   | ({ type: "http" } & ProxyEndpoint)
   | ({ type: "socks5" } & ProxyEndpoint)
-  | { type: "awg"; config: string };
+  | { type: "awg"; config: string }
+  | ({ type: "sstp" } & SstpEndpoint);
+
+export interface SstpEndpoint {
+  /** host or host:port, 443 by default */
+  server: string;
+  username: string;
+  password: string;
+  /** SHA-256 of a trusted (self-signed) server certificate; "" = Windows decides */
+  certSha256: string;
+  insecure: boolean;
+}
 
 export type Outbound = { id: string; name: string } & OutboundKind;
 
@@ -119,9 +130,9 @@ export interface ProxyExtension {
   id: string;
 }
 
-export interface AwgStatus {
+export interface TunnelStatus {
   outboundId: string;
-  /** Unix seconds; 0 while the server has not answered. */
+  /** Unix seconds of the last sign of life from the server; 0 if none. */
   lastHandshake: number;
   rx: number;
   tx: number;

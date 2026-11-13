@@ -1,4 +1,6 @@
-package main
+// Package core holds what every tunnel shares: the network stack wrapper
+// and the SOCKS5 server LocalProxy talks to.
+package core
 
 import (
 	"context"
@@ -17,7 +19,7 @@ import (
 
 const handshakeTimeout = 15 * time.Second
 
-// Tunnel is what the SOCKS server needs from the WireGuard side.
+// Tunnel is what the SOCKS server needs from a tunnel.
 type Tunnel interface {
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 	// Resolve looks a name up through the tunnel's DNS (or locally without one).
@@ -225,7 +227,7 @@ func (a *association) fromClient() {
 		a.client = from
 		a.mu.Unlock()
 
-		host, port, payload, err := parseUDPHeader(buf[:n])
+		host, port, payload, err := ParseUDPHeader(buf[:n])
 		if err != nil {
 			continue
 		}
@@ -283,7 +285,7 @@ func (a *association) toClient(pc net.PacketConn) {
 		if client == nil {
 			continue
 		}
-		a.relay.WriteToUDP(append(udpHeader(src.AddrPort()), buf[:n]...), client)
+		a.relay.WriteToUDP(append(UDPHeader(src.AddrPort()), buf[:n]...), client)
 	}
 }
 
@@ -333,8 +335,8 @@ func readAddr(r io.Reader, atyp byte) (string, uint16, error) {
 	return host, binary.BigEndian.Uint16(p), nil
 }
 
-// parseUDPHeader splits a SOCKS5 UDP datagram: RSV(2) FRAG(1) ATYP ADDR PORT DATA.
-func parseUDPHeader(b []byte) (string, uint16, []byte, error) {
+// ParseUDPHeader splits a SOCKS5 UDP datagram: RSV(2) FRAG(1) ATYP ADDR PORT DATA.
+func ParseUDPHeader(b []byte) (string, uint16, []byte, error) {
 	if len(b) < 4 || b[2] != 0 {
 		return "", 0, nil, errors.New("short or fragmented datagram")
 	}
@@ -346,7 +348,8 @@ func parseUDPHeader(b []byte) (string, uint16, []byte, error) {
 	return host, port, r.b, nil
 }
 
-func udpHeader(src netip.AddrPort) []byte {
+// UDPHeader is the SOCKS5 UDP header for a datagram from src.
+func UDPHeader(src netip.AddrPort) []byte {
 	addr := src.Addr().Unmap()
 	h := []byte{0, 0, 0}
 	if addr.Is4() {
@@ -367,7 +370,7 @@ func reply(c net.Conn, code byte, bound *net.UDPAddr) error {
 	if bound == nil {
 		msg = append(msg, 1, 0, 0, 0, 0, 0, 0)
 	} else {
-		msg = append(msg, udpHeader(bound.AddrPort())[3:]...)
+		msg = append(msg, UDPHeader(bound.AddrPort())[3:]...)
 	}
 	_, err := c.Write(msg)
 	return err

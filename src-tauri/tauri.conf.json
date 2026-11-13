@@ -3,9 +3,9 @@
   "productName": "LocalProxy",
   "identifier": "com.g1vh.localproxy",
   "build": {
-    "beforeDevCommand": "pnpm build:bridge && pnpm dev",
+    "beforeDevCommand": "pnpm build:tunnel && pnpm dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "pnpm build:bridge && pnpm build",
+    "beforeBuildCommand": "pnpm build:tunnel && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -48,7 +48,7 @@
       }
     },
     "externalBin": [
-      "binaries/awg-bridge"
+      "binaries/localproxy-tunnel"
     ],
     "createUpdaterArtifacts": true
   },

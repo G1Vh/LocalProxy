@@ -1,4 +1,4 @@
-package main
+package awg
 
 // End-to-end: a "server" AmneziaWG node and the bridge as its client, both in
 // this process, talking over loopback UDP. The server runs an HTTP server and
@@ -24,6 +24,9 @@ import (
 	"github.com/amnezia-vpn/amneziawg-go/v3/device"
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun/netstack"
 	"golang.org/x/crypto/curve25519"
+
+	"github.com/G1Vh/LocalProxy/tunnel/internal/core"
+	"github.com/G1Vh/LocalProxy/tunnel/internal/core/coretest"
 )
 
 // AmneziaWG 3 obfuscation: junk, paddings, header ranges, header protection,
@@ -150,58 +153,18 @@ func clientConf(client, server keyPair, port int, params map[string]string, hpKe
 	return b.String()
 }
 
-func startClient(t *testing.T, conf string) *Bridge {
+func startClient(t *testing.T, conf string) *Tunnel {
 	t.Helper()
 	cfg, err := ParseConf(conf)
 	if err != nil {
 		t.Fatalf("conf: %v\n%s", err, conf)
 	}
-	bridge, err := StartBridge(cfg, "u", "secret", "127.0.0.1:0")
+	bridge, err := Start(cfg, coretest.User, coretest.Pass, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(bridge.Close)
 	return bridge
-}
-
-// socksHandshake connects and authenticates; returns the control connection.
-func socksHandshake(t *testing.T, port int, user, pass string) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 5*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	c.SetDeadline(time.Now().Add(15 * time.Second))
-	c.Write([]byte{5, 1, 2})
-	resp := make([]byte, 2)
-	if _, err := io.ReadFull(c, resp); err != nil || resp[1] != 2 {
-		c.Close()
-		return nil, fmt.Errorf("method: %v %v", resp, err)
-	}
-	auth := append([]byte{1, byte(len(user))}, user...)
-	auth = append(append(auth, byte(len(pass))), pass...)
-	c.Write(auth)
-	if _, err := io.ReadFull(c, resp); err != nil || resp[1] != 0 {
-		c.Close()
-		return nil, fmt.Errorf("auth rejected: %v %v", resp, err)
-	}
-	return c, nil
-}
-
-func socksConnect(t *testing.T, port int, host string, dport uint16) (net.Conn, byte) {
-	t.Helper()
-	c, err := socksHandshake(t, port, "u", "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := []byte{5, 1, 0, 3, byte(len(host))}
-	req = append(req, host...)
-	req = binary.BigEndian.AppendUint16(req, dport)
-	c.Write(req)
-	rep := make([]byte, 10)
-	if _, err := io.ReadFull(c, rep); err != nil {
-		t.Fatal(err)
-	}
-	return c, rep[1]
 }
 
 func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
@@ -213,7 +176,7 @@ func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 	bridge := startClient(t, clientConf(client, server, port, awgParams, hpKey))
 
 	// TCP: HTTP GET to a server inside the tunnel.
-	c, code := socksConnect(t, bridge.Port, serverIP, 80)
+	c, code := coretest.SocksConnect(t, bridge.Port, serverIP, 80)
 	if code != 0 {
 		t.Fatalf("CONNECT failed with code %d", code)
 	}
@@ -225,7 +188,7 @@ func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 	}
 
 	// UDP ASSOCIATE: echo through the tunnel.
-	ctl, err := socksHandshake(t, bridge.Port, "u", "secret")
+	ctl, err := coretest.SocksHandshake(bridge.Port, "u", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +204,7 @@ func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer udp.Close()
-	dgram := append(udpHeader(netip.MustParseAddrPort(serverIP+":7")), "ping-udp"...)
+	dgram := append(core.UDPHeader(netip.MustParseAddrPort(serverIP+":7")), "ping-udp"...)
 	if _, err := udp.WriteToUDP(dgram, relay); err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +214,7 @@ func TestBridgeCarriesTCPAndUDPOverAmneziaWG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no UDP echo: %v", err)
 	}
-	host, sport, payload, err := parseUDPHeader(buf[:n])
+	host, sport, payload, err := core.ParseUDPHeader(buf[:n])
 	if err != nil || host != serverIP || sport != 7 || string(payload) != "ping-udp" {
 		t.Fatalf("bad UDP reply: host=%s port=%d payload=%q err=%v", host, sport, payload, err)
 	}
@@ -270,7 +233,7 @@ func TestPlainWireGuardWorksToo(t *testing.T) {
 	server, client := newKey(t), newKey(t)
 	port := startServer(t, server, client, nil, nil)
 	bridge := startClient(t, clientConf(client, server, port, nil, nil))
-	c, code := socksConnect(t, bridge.Port, serverIP, 80)
+	c, code := coretest.SocksConnect(t, bridge.Port, serverIP, 80)
 	defer c.Close()
 	if code != 0 {
 		t.Fatalf("CONNECT failed with code %d", code)
@@ -290,7 +253,7 @@ func TestMismatchedObfuscationDoesNotConnect(t *testing.T) {
 	wrong["H1"] = "900000-900100"
 	bridge := startClient(t, clientConf(client, server, port, wrong, nil))
 
-	c, err := socksHandshake(t, bridge.Port, "u", "secret")
+	c, err := coretest.SocksHandshake(bridge.Port, "u", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +273,7 @@ func TestWrongSocksPasswordIsRejected(t *testing.T) {
 	server, client := newKey(t), newKey(t)
 	port := startServer(t, server, client, nil, nil)
 	bridge := startClient(t, clientConf(client, server, port, nil, nil))
-	if c, err := socksHandshake(t, bridge.Port, "u", "wrong"); err == nil {
+	if c, err := coretest.SocksHandshake(bridge.Port, "u", "wrong"); err == nil {
 		c.Close()
 		t.Fatal("wrong password accepted")
 	}
@@ -321,9 +284,9 @@ func TestWrongSocksPasswordIsRejected(t *testing.T) {
 func TestDeadServerClosesWithoutReply(t *testing.T) {
 	log.SetOutput(io.Discard)
 	// Past the start-up grace period a dead tunnel must fail fast.
-	saved := warmUp
-	warmUp = 0
-	t.Cleanup(func() { warmUp = saved })
+	saved := core.WarmUp
+	core.WarmUp = 0
+	t.Cleanup(func() { core.WarmUp = saved })
 	server, client := newKey(t), newKey(t)
 	free, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -333,7 +296,7 @@ func TestDeadServerClosesWithoutReply(t *testing.T) {
 	free.Close() // nobody answers on this port
 	bridge := startClient(t, clientConf(client, server, port, nil, nil))
 
-	c, err := socksHandshake(t, bridge.Port, "u", "secret")
+	c, err := coretest.SocksHandshake(bridge.Port, "u", "secret")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
-package main
+package awg
 
 import (
+	"github.com/G1Vh/LocalProxy/tunnel/internal/core/coretest"
 	"io"
 	"log"
 	"testing"
@@ -21,7 +22,7 @@ func TestThroughputLoopback(t *testing.T) {
 	port := startServer(t, server, client, awgParams, nil)
 	bridge := startClient(t, clientConf(client, server, port, awgParams, nil))
 
-	c, code := socksConnect(t, bridge.Port, serverIP, 80)
+	c, code := coretest.SocksConnect(t, bridge.Port, serverIP, 80)
 	if code != 0 {
 		t.Fatalf("CONNECT failed with code %d", code)
 	}

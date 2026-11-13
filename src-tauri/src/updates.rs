@@ -98,9 +98,9 @@ fn before_exit(app: &AppHandle) {
     if let Err(e) = state.system.restore() {
         tracing::error!("cannot restore system proxy before update: {e:#}");
     }
-    // The installer replaces awg-bridge.exe too: stop it (kill on drop).
-    if let Ok(mut awg) = state.awg.try_lock() {
-        awg.take();
+    // The installer replaces the tunnel exe too: stop it (kill on drop).
+    if let Ok(mut tunnel) = state.tunnel.try_lock() {
+        tunnel.take();
     }
 }
 

@@ -2,7 +2,7 @@
   import * as api from "../lib/api";
   import { newId, store } from "../lib/store.svelte";
   import { onMount } from "svelte";
-  import type { AwgStatus, Outbound, Probe } from "../lib/types";
+  import type { Outbound, Probe, TunnelStatus } from "../lib/types";
 
   type Draft = {
     id: string;
@@ -13,6 +13,9 @@
     username: string;
     password: string;
     config: string;
+    server: string;
+    cert: "system" | "pin" | "none";
+    certSha256: string;
   };
 
   let draft = $state<Draft | null>(null);
@@ -22,11 +25,11 @@
 
   const config = $derived(store.config!);
 
-  // Tunnel state of the running WireGuard/AmneziaWG bridge, refreshed while the tab is open.
-  let awg = $state<AwgStatus | null>(null);
+  // State of the running tunnel (WireGuard, SSTP), refreshed while the tab is open.
+  let tunnel = $state<TunnelStatus | null>(null);
   onMount(() => {
     const poll = () =>
-      api.getAwgStatus().then((s) => (awg = s)).catch(() => (awg = null));
+      api.getTunnelStatus().then((s) => (tunnel = s)).catch(() => (tunnel = null));
     poll();
     const timer = setInterval(poll, 3000);
     return () => clearInterval(timer);
@@ -38,11 +41,27 @@
     return `${(n / 1024 / 1024).toFixed(1)} МБ`;
   }
 
-  const typeLabel = { http: "HTTP-прокси", socks5: "SOCKS5", awg: "WireGuard / AmneziaWG" } as const;
+  const typeLabel = {
+    http: "HTTP-прокси",
+    socks5: "SOCKS5",
+    awg: "WireGuard / AmneziaWG",
+    sstp: "SSTP",
+  } as const;
 
   function address(o: Outbound) {
-    return o.type === "awg" ? "конфиг .conf" : `${o.host}:${o.port}${o.username ? " · с логином" : ""}`;
+    switch (o.type) {
+      case "awg":
+        return "конфиг .conf";
+      case "sstp":
+        return `${o.server} · ${o.username}`;
+      default:
+        return `${o.host}:${o.port}${o.username ? " · с логином" : ""}`;
+    }
   }
+
+  const isProxy = (t: Outbound["type"]) => t === "http" || t === "socks5";
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const normalizeFingerprint = (s: string) => s.replace(/[\s:-]/g, "").toLowerCase();
 
   function startNew() {
     draftError = null;
@@ -55,6 +74,9 @@
       username: "",
       password: "",
       config: "",
+      server: "",
+      cert: "system",
+      certSha256: "",
     };
   }
 
@@ -64,11 +86,14 @@
       id: o.id,
       name: o.name,
       type: o.type,
-      host: o.type === "awg" ? "" : o.host,
-      port: o.type === "awg" ? "" : String(o.port),
+      host: isProxy(o.type) && "host" in o ? o.host : "",
+      port: isProxy(o.type) && "port" in o ? String(o.port) : "",
       username: o.type === "awg" ? "" : o.username,
       password: o.type === "awg" ? "" : o.password,
       config: o.type === "awg" ? o.config : "",
+      server: o.type === "sstp" ? o.server : "",
+      cert: o.type !== "sstp" ? "system" : o.certSha256 ? "pin" : o.insecure ? "none" : "system",
+      certSha256: o.type === "sstp" ? o.certSha256 : "",
     };
   }
 
@@ -77,6 +102,23 @@
     if (d.type === "awg") {
       if (!d.config.includes("[Interface]")) return "Вставьте содержимое .conf-файла WireGuard / AmneziaWG";
       return { id: d.id, name, type: "awg", config: d.config };
+    }
+    if (d.type === "sstp") {
+      const server = d.server.trim();
+      if (!server) return "Укажите адрес SSTP-сервера";
+      if (!d.username.trim()) return "Укажите логин";
+      const pin = normalizeFingerprint(d.certSha256);
+      if (d.cert === "pin" && !HEX64.test(pin)) return "Отпечаток SHA-256 — 64 шестнадцатеричных символа";
+      return {
+        id: d.id,
+        name: d.name.trim() || server,
+        type: "sstp",
+        server,
+        username: d.username.trim(),
+        password: d.password,
+        certSha256: d.cert === "pin" ? pin : "",
+        insecure: d.cert === "none",
+      };
     }
     const host = d.host.trim();
     const port = Number(d.port);
@@ -137,6 +179,18 @@
     await test(outbound);
   }
 
+  /** The fingerprint an SSTP check reported for an untrusted certificate. */
+  function reportedFingerprint(id: string): string | null {
+    return probes[id]?.error?.match(/SHA-256: ([0-9A-F]{2}(?::[0-9A-F]{2}){31})/)?.[1] ?? null;
+  }
+
+  function trustReported(fp: string) {
+    if (!draft) return;
+    draft.cert = "pin";
+    draft.certSha256 = fp;
+    testDraft();
+  }
+
   async function loadConf(e: Event) {
     const file = (e.currentTarget as HTMLInputElement).files?.[0];
     if (file && draft) {
@@ -180,9 +234,30 @@
             <option value="http">HTTP-прокси</option>
             <option value="socks5">SOCKS5</option>
             <option value="awg">WireGuard / AmneziaWG</option>
+            <option value="sstp">SSTP</option>
           </select>
         </label>
-        {#if draft.type !== "awg"}
+        {#if draft.type === "sstp"}
+          <label>Сервер <input type="text" bind:value={draft.server} placeholder="vpn.example.com или vpn.example.com:4443" /></label>
+          <label>
+            Сертификат сервера
+            <select bind:value={draft.cert}>
+              <option value="system">проверять (доверенный в Windows)</option>
+              <option value="pin">доверять по отпечатку</option>
+              <option value="none">не проверять</option>
+            </select>
+          </label>
+          <label>Логин <input type="text" bind:value={draft.username} placeholder="user или DOMAIN\user" /></label>
+          <label>
+            Пароль
+            <span class="pw">
+              <input type={showPassword ? "text" : "password"} bind:value={draft.password} />
+              <button class="small" onclick={() => (showPassword = !showPassword)}>
+                {showPassword ? "Скрыть" : "Показать"}
+              </button>
+            </span>
+          </label>
+        {:else if draft.type !== "awg"}
           <label>Адрес <input type="text" bind:value={draft.host} placeholder="proxy.example.com" /></label>
           <label>Порт <input type="text" inputmode="numeric" bind:value={draft.port} placeholder="8080" /></label>
           <label>Логин <input type="text" bind:value={draft.username} placeholder="необязательно" /></label>
@@ -211,9 +286,31 @@
           <span class="hint">Подходит и обычный WireGuard, и AmneziaWG (все версии маскировки). Туннель поднимается внутри LocalProxy: без драйвера и прав администратора, через него идут только домены из правил.</span>
         </div>
       {/if}
+      {#if draft.type === "sstp"}
+        {#if draft.cert === "pin"}
+          <label class="conf">
+            Отпечаток SHA-256 сертификата
+            <input type="text" class="mono" bind:value={draft.certSha256} placeholder="AB:CD:…" />
+          </label>
+        {:else if draft.cert === "none"}
+          <div class="hint">
+            Без проверки сертификата кто-то посередине может выдать себя за сервер и узнать хэш пароля.
+            Лучше доверять по отпечатку.
+          </div>
+        {/if}
+        <div class="hint">
+          Вход по MS-CHAPv2 или PAP; подходят Windows RRAS, MikroTik, SoftEther. Туннель поднимается внутри
+          LocalProxy, без драйвера и прав администратора. Для самоподписанного сертификата нажмите
+          «Проверить»: программа покажет его отпечаток и предложит ему доверять.
+        </div>
+      {/if}
       {#if draftError}<div class="err">{draftError}</div>{/if}
       <div class="toolbar">
         {@render probeLine(draft.id)}
+        {#if draft.type === "sstp" && reportedFingerprint(draft.id)}
+          {@const fp = reportedFingerprint(draft.id)!}
+          <button class="small" onclick={() => trustReported(fp)}>Доверять этому сертификату</button>
+        {/if}
         <span class="spacer"></span>
         <button onclick={testDraft} disabled={probes[draft.id]?.busy}>Проверить</button>
         <button onclick={() => (draft = null)}>Отмена</button>
@@ -236,10 +333,16 @@
       </label>
       <span class="pill">{typeLabel[o.type]}</span>
       <span class="hint mono">{address(o)}</span>
-      {#if o.type === "awg" && awg?.outboundId === o.id}
-        {@const ago = awg.lastHandshake ? Math.round(Date.now() / 1000 - awg.lastHandshake) : null}
-        <span class="pill {ago !== null && ago < 180 ? 'ok' : 'warn'}" title="Состояние туннеля">
-          {ago === null ? "сервер пока не ответил" : `рукопожатие ${ago} с назад`} · ↓ {bytes(awg.rx)} ↑ {bytes(awg.tx)}
+      {#if tunnel?.outboundId === o.id}
+        {@const ago = tunnel.lastHandshake ? Math.round(Date.now() / 1000 - tunnel.lastHandshake) : null}
+        {@const fresh = ago !== null && ago < (o.type === "awg" ? 180 : 60)}
+        <span class="pill {fresh ? 'ok' : 'warn'}" title="Состояние туннеля">
+          {#if o.type === "awg"}
+            {ago === null ? "сервер пока не ответил" : `рукопожатие ${ago} с назад`}
+          {:else}
+            {fresh ? "подключено" : "нет связи с сервером, переподключение"}
+          {/if}
+          · ↓ {bytes(tunnel.rx)} ↑ {bytes(tunnel.tx)}
         </span>
       {/if}
       <span class="spacer"></span>
@@ -253,8 +356,8 @@
   {:else}
     {#if !draft}
       <p class="hint">
-        Outbound — это сервер, через который пойдут домены из правил: HTTP- или SOCKS5-прокси (позже —
-        WireGuard / AmneziaWG). Добавьте хотя бы один.
+        Outbound — это сервер, через который пойдут домены из правил: HTTP- или SOCKS5-прокси, VPN
+        WireGuard / AmneziaWG или SSTP. Добавьте хотя бы один.
       </p>
     {/if}
   {/each}

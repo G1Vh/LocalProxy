@@ -1,7 +1,6 @@
 // Hide the console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod awg;
 mod browsers;
 mod commands;
 mod events;
@@ -11,6 +10,7 @@ mod rules;
 mod state;
 mod system;
 mod tray;
+mod tunnel;
 mod ui_commands;
 mod updates;
 
@@ -93,7 +93,7 @@ fn main() {
             ui_commands::export_rules,
             ui_commands::import_rules,
             ui_commands::get_browser_warnings,
-            ui_commands::get_awg_status,
+            ui_commands::get_tunnel_status,
             ui_commands::get_traffic,
             ui_commands::reset_traffic,
             health::get_health,

@@ -35,8 +35,8 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version-file: awg-bridge/go.mod
-          cache-dependency-path: awg-bridge/go.sum
+          go-version-file: tunnel/go.mod
+          cache-dependency-path: tunnel/go.sum
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -45,11 +45,11 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # The app's build script wants the bridge binary and the frontend in place.
+      # The app's build script wants the tunnel binary and the frontend in place.
       - name: Tests
         run: |
-          pnpm test:bridge
-          pnpm build:bridge
+          pnpm test:tunnel
+          pnpm build:tunnel
           pnpm build
           cargo test --workspace
 

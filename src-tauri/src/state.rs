@@ -28,12 +28,14 @@ pub struct AppState {
     pub proxy: tokio::sync::Mutex<Option<ProxyServer>>,
     /// Windows proxy settings and environment variables.
     pub system: SystemProxy,
-    /// The WireGuard/AmneziaWG bridge, while the active outbound needs it.
-    pub awg: tokio::sync::Mutex<Option<crate::awg::AwgProcess>>,
+    /// The tunnel process, while the active outbound needs one.
+    pub tunnel: tokio::sync::Mutex<Option<crate::tunnel::TunnelProcess>>,
     /// Lasting problems found at startup (e.g. a broken config file).
     pub warnings: Vec<String>,
     /// Why the proxy could not start; cleared once it starts.
     start_error: Mutex<Option<String>>,
+    /// Why the tunnel process could not start; cleared once it runs.
+    tunnel_error: Mutex<Option<String>>,
     /// Hits per rule since the app started.
     rule_stats: Mutex<RuleStats>,
     presets: Mutex<PresetsState>,
@@ -70,9 +72,10 @@ impl AppState {
             config: Mutex::new(config),
             proxy: tokio::sync::Mutex::new(None),
             system: SystemProxy::new(&dir),
-            awg: tokio::sync::Mutex::new(None),
+            tunnel: tokio::sync::Mutex::new(None),
             warnings,
             start_error: Mutex::new(None),
+            tunnel_error: Mutex::new(None),
             rule_stats: Mutex::new(RuleStats::new()),
             health: Mutex::new(Health::Off),
             health_poke: Arc::new(Notify::new()),
@@ -103,6 +106,21 @@ impl AppState {
 
     pub fn set_start_error(&self, error: Option<String>) {
         *self.start_error.lock().unwrap_or_else(|e| e.into_inner()) = error;
+    }
+
+    pub fn tunnel_error(&self) -> Option<String> {
+        self.tunnel_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Returns whether the error changed.
+    pub fn set_tunnel_error(&self, error: Option<String>) -> bool {
+        let mut current = self.tunnel_error.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = *current != error;
+        *current = error;
+        changed
     }
 
     pub fn rule_stats(&self) -> MutexGuard<'_, RuleStats> {

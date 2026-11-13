@@ -1,4 +1,4 @@
-module github.com/G1Vh/LocalProxy/awg-bridge
+module github.com/G1Vh/LocalProxy/tunnel
 
 go 1.27.4
 

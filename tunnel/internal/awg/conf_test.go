@@ -1,4 +1,4 @@
-package main
+package awg
 
 import (
 	"encoding/base64"

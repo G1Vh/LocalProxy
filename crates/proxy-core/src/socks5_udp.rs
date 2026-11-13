@@ -200,7 +200,7 @@ impl Association {
                 Err(e) => Err(e.to_string()),
             },
             Some(Upstream::Http(_)) => Err("UDP через HTTP-прокси не передаётся".to_owned()),
-            Some(Upstream::Awg) => Err("WireGuard/AmneziaWG не подключён".to_owned()),
+            Some(Upstream::Tunnel) => Err("туннель не подключён".to_owned()),
         };
         if let Err(e) = &result {
             self.upstream_error = Some(e.clone());
