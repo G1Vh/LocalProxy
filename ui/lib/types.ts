@@ -1,6 +1,7 @@
 // Mirrors the Rust types (serde camelCase).
 
 export type OnOutboundDown = "block" | "direct";
+export type Theme = "system" | "light" | "dark";
 export type MatchType = "exact" | "domainAndSubdomains" | "mask" | "cidr" | "process";
 export type RuleAction = "proxy" | "direct";
 
@@ -51,6 +52,8 @@ export interface Config {
   checkUpdates: boolean;
   /** Whole system's traffic through a TUN adapter (needs admin rights). */
   tunEnabled: boolean;
+  /** Window colors: as Windows apps are, or always light or dark. */
+  theme: Theme;
   /** The default outbound: for proxy rules without one of their own. */
   activeOutboundId: string | null;
   outbounds: Outbound[];

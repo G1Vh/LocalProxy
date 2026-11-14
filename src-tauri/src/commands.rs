@@ -1,4 +1,5 @@
 use proxy_core::Config;
+use proxy_core::config::Theme;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -91,6 +92,7 @@ pub async fn apply_config(
     let start_error = crate::runtime::sync_runtime(app, state, &mut config).await;
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config() = config.clone();
+    apply_theme(app, config.theme);
     tray::refresh(app, &config);
     crate::health::poke(app);
     if let Err(e) = app.emit(CONFIG_CHANGED, &config) {
@@ -99,6 +101,22 @@ pub async fn apply_config(
     match start_error {
         Some(e) => Err(e),
         None => Ok(config),
+    }
+}
+
+/// Light or dark window frame and page. On Windows the webview takes its
+/// color scheme from the window, so the page's `light-dark()` colors follow.
+pub fn apply_theme(app: &AppHandle, theme: Theme) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let theme = match theme {
+        Theme::System => None,
+        Theme::Light => Some(tauri::Theme::Light),
+        Theme::Dark => Some(tauri::Theme::Dark),
+    };
+    if let Err(e) = window.set_theme(theme) {
+        tracing::warn!("cannot set theme: {e}");
     }
 }
 

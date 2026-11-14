@@ -32,7 +32,7 @@ pub fn classify(entry: &str) -> Option<(String, MatchType)> {
     }
     // Normalizing as a mask strips URL parts but keeps wildcards.
     let as_mask = normalize_pattern(entry, MatchType::Mask).ok()?;
-    let bare = as_mask.strip_prefix("*.").unwrap_or(&as_mask);
+    let bare = as_mask.trim_prefix("*.");
     if bare.contains(['*', '?']) {
         Some((as_mask.clone(), MatchType::Mask))
     } else {

@@ -1,4 +1,4 @@
-import type { MatchType, OnOutboundDown, RouteKind } from "./types";
+import type { MatchType, OnOutboundDown, RouteKind, Theme } from "./types";
 
 export const MATCH_TYPES: { value: MatchType; label: string; hint: string }[] = [
   { value: "domainAndSubdomains", label: "домен и поддомены", hint: "openai.com → и api.openai.com" },
@@ -24,6 +24,12 @@ export const ROUTES: Record<RouteKind, { label: string; css: string }> = {
 export const ON_DOWN: { value: OnOutboundDown; label: string }[] = [
   { value: "block", label: "блокировать эти домены" },
   { value: "direct", label: "пускать напрямую" },
+];
+
+export const THEMES: { value: Theme; label: string }[] = [
+  { value: "system", label: "как в Windows" },
+  { value: "light", label: "светлая" },
+  { value: "dark", label: "тёмная" },
 ];
 
 export function bytes(n: number): string {

@@ -1,47 +1,34 @@
 :root {
-  --bg: #f5f5f4;
-  --surface: #ffffff;
-  --surface-alt: #f0efec;
-  --hover: rgba(0, 0, 0, 0.04);
-  --border: rgba(0, 0, 0, 0.1);
-  --border-strong: rgba(0, 0, 0, 0.2);
-  --text: #1f1e1c;
-  --text-secondary: #6b6a66;
-  --accent: #2f6fd0;
-  --accent-bg: #e6f0fb;
-  --success-bg: #e6f3dc;
-  --success-text: #2f5f10;
-  --danger-bg: #fcebeb;
-  --danger-text: #a32d2d;
-  --warning-bg: #faeeda;
-  --warning-text: #7a4a08;
-  --toggle-off: #b4b2a9;
+  /* Each color is light-dark(light, dark); color-scheme picks the half:
+     Windows' choice by default, or the theme set in Settings (data-theme). */
+  color-scheme: light dark;
+  --bg: light-dark(#f5f5f4, #1c1c1b);
+  --surface: light-dark(#ffffff, #262624);
+  --surface-alt: light-dark(#f0efec, #2f2f2c);
+  --hover: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  --border: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+  --border-strong: light-dark(rgba(0, 0, 0, 0.2), rgba(255, 255, 255, 0.2));
+  --text: light-dark(#1f1e1c, #ecebe6);
+  --text-secondary: light-dark(#6b6a66, #a3a19a);
+  --accent: light-dark(#2f6fd0, #6ea4f0);
+  --accent-bg: light-dark(#e6f0fb, #1b3352);
+  --success-bg: light-dark(#e6f3dc, #27400f);
+  --success-text: light-dark(#2f5f10, #c0dd97);
+  --danger-bg: light-dark(#fcebeb, #4a1b1b);
+  --danger-text: light-dark(#a32d2d, #f09595);
+  --warning-bg: light-dark(#faeeda, #4a3206);
+  --warning-text: light-dark(#7a4a08, #fac775);
+  --toggle-off: light-dark(#b4b2a9, #5f5e5a);
   --radius: 8px;
   --font-mono: "Cascadia Mono", Consolas, monospace;
+}
+
+:root[data-theme="light"] {
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1c1c1b;
-    --surface: #262624;
-    --surface-alt: #2f2f2c;
-    --hover: rgba(255, 255, 255, 0.05);
-    --border: rgba(255, 255, 255, 0.1);
-    --border-strong: rgba(255, 255, 255, 0.2);
-    --text: #ecebe6;
-    --text-secondary: #a3a19a;
-    --accent: #6ea4f0;
-    --accent-bg: #1b3352;
-    --success-bg: #27400f;
-    --success-text: #c0dd97;
-    --danger-bg: #4a1b1b;
-    --danger-text: #f09595;
-    --warning-bg: #4a3206;
-    --warning-text: #fac775;
-    --toggle-off: #5f5e5a;
-    color-scheme: dark;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {

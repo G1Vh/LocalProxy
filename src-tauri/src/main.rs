@@ -54,6 +54,7 @@ fn main() {
         .setup(move |app| {
             let state = state::AppState::load()?;
             sync_at_startup(app.handle(), &state);
+            commands::apply_theme(app.handle(), state.config().theme);
             let poke = state.health_poke.clone();
             app.manage(state);
             app.manage(updates::Updates::default());

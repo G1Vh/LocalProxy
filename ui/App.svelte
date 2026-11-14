@@ -20,6 +20,12 @@
   const config = $derived(store.config);
   const active = $derived(config?.outbounds.find((o) => o.id === config.activeOutboundId));
   const presetCount = $derived(config?.presets.length ?? 0);
+  // The window frame follows from Rust; this covers the page right away.
+  $effect(() => {
+    const theme = config?.theme;
+    if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+    else delete document.documentElement.dataset.theme;
+  });
   // Port forwards are for proxy mode: in TUN every program reaches servers itself.
   $effect(() => {
     if (config?.tunEnabled && tab === "ports") tab = "rules";

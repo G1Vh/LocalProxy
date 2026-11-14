@@ -100,6 +100,7 @@ fn save_then_load_roundtrip() {
 fn json_shape_is_stable() {
     let json = serde_json::to_value(sample()).unwrap();
     assert_eq!(json["onOutboundDown"], "block");
+    assert_eq!(json["theme"], "system");
     assert_eq!(json["outbounds"][0]["type"], "http");
     assert_eq!(json["outbounds"][0]["host"], "10.20.0.5");
     assert_eq!(json["outbounds"][1]["type"], "awg");
@@ -118,6 +119,7 @@ fn partial_file_fills_defaults() {
     let config = Config::load(&path).unwrap();
     assert_eq!(config.port, 8888);
     assert!(config.socks5_enabled);
+    assert_eq!(config.theme, Theme::System);
     let rule = &config.rules[0];
     assert!(rule.enabled);
     assert_eq!(rule.match_type, MatchType::DomainAndSubdomains);

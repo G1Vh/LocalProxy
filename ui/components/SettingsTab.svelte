@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "../lib/api";
-  import { ON_DOWN } from "../lib/labels";
+  import { ON_DOWN, THEMES } from "../lib/labels";
   import { store } from "../lib/store.svelte";
-  import type { OnOutboundDown, TunInfo } from "../lib/types";
+  import type { OnOutboundDown, Theme, TunInfo } from "../lib/types";
 
   const config = $derived(store.config!);
   let portInput = $state(String(store.config?.port ?? ""));
@@ -113,6 +113,16 @@
       {#each ON_DOWN as o}<option value={o.value}>{o.label}</option>{/each}
     </select>
   </label>
+  <label class="row">
+    <span>Тема</span>
+    <select
+      value={config.theme}
+      onchange={(e) => store.update((c) => (c.theme = e.currentTarget.value as Theme))}
+      disabled={store.busy}
+    >
+      {#each THEMES as t}<option value={t.value}>{t.label}</option>{/each}
+    </select>
+  </label>
   <label class="check">
     <input
       type="checkbox"
@@ -165,14 +175,13 @@
     </span>
   </label>
   <div class="row updates">
-    <span class="hint">Версия {store.info?.version}{checkResult ? ` · ${checkResult}` : ""}</span>
+    <span class="hint">{checkResult}</span>
     <button onclick={checkNow} disabled={checking}>{checking ? "Проверка…" : "Проверить сейчас"}</button>
   </div>
 </div>
 
 <style>
   .settings {
-    max-width: 640px;
     display: flex;
     flex-direction: column;
     gap: 10px;

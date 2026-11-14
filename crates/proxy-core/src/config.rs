@@ -35,6 +35,8 @@ pub struct Config {
     /// LocalProxy via a virtual adapter. Off: system proxy (PAC) only, no
     /// administrator rights needed.
     pub tun_enabled: bool,
+    /// Window colors: follow Windows, or always light or dark.
+    pub theme: Theme,
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
@@ -68,6 +70,7 @@ impl Default for Config {
             notifications: true,
             check_updates: true,
             tun_enabled: true,
+            theme: Theme::System,
             active_outbound_id: None,
             outbounds: Vec::new(),
             rules: Vec::new(),
@@ -87,6 +90,16 @@ pub enum OnOutboundDown {
     Block,
     /// Fall back to a direct connection.
     Direct,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    /// Light or dark as Windows apps are.
+    #[default]
+    System,
+    Light,
+    Dark,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
