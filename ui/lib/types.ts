@@ -54,6 +54,8 @@ export interface Config {
   tunEnabled: boolean;
   /** Window colors: as Windows apps are, or always light or dark. */
   theme: Theme;
+  /** MCP server for AI agents (Claude Code and others). */
+  mcp: McpSettings;
   /** The default outbound: for proxy rules without one of their own. */
   activeOutboundId: string | null;
   outbounds: Outbound[];
@@ -77,6 +79,21 @@ export interface HiddenEvent {
   port?: number;
   /** Hide only failed connections. */
   errorsOnly: boolean;
+}
+
+export interface McpSettings {
+  enabled: boolean;
+  port: number;
+  /** Made when the server is first switched on. */
+  token: string;
+}
+
+export interface McpStatus {
+  running: boolean;
+  url: string;
+  /** The command that connects Claude Code; empty until a token exists. */
+  command: string;
+  error: string | null;
 }
 
 export interface AppInfo {

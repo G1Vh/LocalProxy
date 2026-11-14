@@ -25,13 +25,13 @@ pub struct RulesChange {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HostCheck {
-    host: String,
+    pub(crate) host: String,
     /// What happens to this host: through the outbound, or direct.
-    action: RuleAction,
+    pub(crate) action: RuleAction,
     /// The deciding rule (a user rule or a preset entry); `None` if none matched.
-    rule_id: Option<Uuid>,
+    pub(crate) rule_id: Option<Uuid>,
     /// For "proxy": the outbound it goes through (the rule's own or the default).
-    outbound_id: Option<Uuid>,
+    pub(crate) outbound_id: Option<Uuid>,
 }
 
 /// Canonical form of a pattern, or why it is invalid. Used to validate edits.
@@ -270,6 +270,33 @@ pub async fn set_preset_selected(
         config.presets.push(id);
     }
     apply_config(&app, &state, config).await
+}
+
+/// The MCP server as the settings show it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    running: bool,
+    url: String,
+    /// The command that connects Claude Code; empty until a token exists.
+    command: String,
+    error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_mcp_status(state: State<'_, AppState>) -> Result<McpStatus, String> {
+    let settings = state.config().mcp.clone();
+    let running = state.mcp.lock().await.is_some();
+    Ok(McpStatus {
+        running,
+        url: crate::mcp::url(settings.port),
+        command: if settings.token.is_empty() {
+            String::new()
+        } else {
+            crate::mcp::claude_command(&settings)
+        },
+        error: state.mcp_error().clone(),
+    })
 }
 
 #[tauri::command]

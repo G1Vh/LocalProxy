@@ -56,6 +56,7 @@ pub fn forward(app: AppHandle, mut rx: Receiver<ConnEvent>) {
             crate::health::observe(&app, &batch);
             if let Some(state) = app.try_state::<AppState>() {
                 record(&mut state.rule_stats(), &batch);
+                state.remember_events(&batch);
                 let hidden = state.config().hidden_events.clone();
                 let mut stats = state.hidden_stats();
                 if drop_hidden(&hidden, &mut batch, &mut stats) {

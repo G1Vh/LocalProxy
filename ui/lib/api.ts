@@ -7,6 +7,7 @@ import type {
   HealthState,
   HostCheck,
   HostTraffic,
+  McpStatus,
   MatchType,
   Outbound,
   PresetsInfo,
@@ -36,6 +37,7 @@ export const getPresets = () => invoke<PresetsInfo>("get_presets");
 export const refreshPresets = () => invoke<PresetsInfo>("refresh_presets");
 export const getRuleStats = () => invoke<Record<string, RuleStat>>("get_rule_stats");
 export const getHiddenStats = () => invoke<Record<string, RuleStat>>("get_hidden_stats");
+export const getMcpStatus = () => invoke<McpStatus>("get_mcp_status");
 export const addRuleLines = (text: string) => invoke<RulesChange>("add_rule_lines", { text });
 export const setPresetSelected = (id: string, selected: boolean) =>
   invoke<Config>("set_preset_selected", { id, selected });

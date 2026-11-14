@@ -14,6 +14,9 @@ pub const CONFIG_VERSION: u32 = 1;
 /// Default local listening port (HTTP and SOCKS5 share it).
 pub const DEFAULT_PORT: u16 = 3128;
 
+/// Default port of the MCP server for AI agents (see [`McpSettings`]).
+pub const DEFAULT_MCP_PORT: u16 = 3129;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
@@ -37,6 +40,8 @@ pub struct Config {
     pub tun_enabled: bool,
     /// Window colors: follow Windows, or always light or dark.
     pub theme: Theme,
+    /// The MCP server through which AI agents can see and change LocalProxy.
+    pub mcp: McpSettings,
     pub active_outbound_id: Option<Uuid>,
     pub outbounds: Vec<Outbound>,
     pub rules: Vec<Rule>,
@@ -71,6 +76,7 @@ impl Default for Config {
             check_updates: true,
             tun_enabled: true,
             theme: Theme::System,
+            mcp: McpSettings::default(),
             active_outbound_id: None,
             outbounds: Vec::new(),
             rules: Vec::new(),
@@ -90,6 +96,29 @@ pub enum OnOutboundDown {
     Block,
     /// Fall back to a direct connection.
     Direct,
+}
+
+/// LocalProxy's MCP server (Streamable HTTP on loopback): AI agents such as
+/// Claude Code read the state and the connection feed and change rules,
+/// presets and settings through it. Off by default; a request must carry
+/// `Authorization: Bearer <token>`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpSettings {
+    pub enabled: bool,
+    pub port: u16,
+    /// Made when the server is first switched on; empty until then.
+    pub token: String,
+}
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: DEFAULT_MCP_PORT,
+            token: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

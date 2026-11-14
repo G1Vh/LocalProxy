@@ -3,7 +3,7 @@
   import * as api from "../lib/api";
   import { ON_DOWN, THEMES } from "../lib/labels";
   import { store } from "../lib/store.svelte";
-  import type { OnOutboundDown, Theme, TunInfo } from "../lib/types";
+  import type { McpStatus, OnOutboundDown, Theme, TunInfo } from "../lib/types";
 
   const config = $derived(store.config!);
   let portInput = $state(String(store.config?.port ?? ""));
@@ -11,6 +11,24 @@
   let checking = $state(false);
   let tun = $state<TunInfo | null>(null);
   let checkResult = $state("");
+  let mcp = $state<McpStatus | null>(null);
+
+  // The server follows the config; its state is read after every change.
+  $effect(() => {
+    void config.mcp?.enabled;
+    void config.mcp?.port;
+    api.getMcpStatus().then((s) => (mcp = s)).catch(() => (mcp = null));
+  });
+
+  async function copyMcpCommand() {
+    if (!mcp?.command) return;
+    try {
+      await navigator.clipboard.writeText(mcp.command);
+      store.say("Команда скопирована: выполните её в терминале");
+    } catch (e) {
+      store.error = `Не удалось скопировать: ${e}`;
+    }
+  }
 
   onMount(() => {
     api.getAutostart().then((a) => (autostart = a)).catch((e) => (store.error = String(e)));
@@ -162,6 +180,30 @@
     <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
     <span>Запускать с Windows (в трее)</span>
   </label>
+  <div class="mcp">
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={config.mcp?.enabled ?? false}
+        onchange={() => store.update((c) => (c.mcp = { ...c.mcp, enabled: !c.mcp?.enabled }))}
+        disabled={store.busy}
+      />
+      <span>
+        Управление через MCP
+        <span class="hint">— для ИИ-агентов вроде Claude Code: правила, наборы, каналы, лента подключений</span>
+      </span>
+    </label>
+    {#if config.mcp?.enabled && mcp}
+      <div class="row mcp-state">
+        {#if mcp.error}
+          <span class="row-error">{mcp.error}</span>
+        {:else}
+          <span class="hint mono ellipsis" title={mcp.url}>{mcp.running ? mcp.url : "запускается…"}</span>
+        {/if}
+        <button class="small" onclick={copyMcpCommand} disabled={!mcp.command}>Скопировать команду для Claude Code</button>
+      </div>
+    {/if}
+  </div>
   <label class="check">
     <input
       type="checkbox"
@@ -205,6 +247,15 @@
   }
   .tun-state {
     display: block;
+  }
+  .mcp {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .mcp-state {
+    padding-left: 24px;
+    min-width: 0;
   }
   .mode {
     display: flex;

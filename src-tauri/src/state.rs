@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Context;
 use proxy_core::traffic::Traffic;
-use proxy_core::{Config, ProxyServer};
+use proxy_core::{Config, ConnEvent, ProxyServer};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
@@ -51,7 +51,16 @@ pub struct AppState {
     pub health_poke: Arc<Notify>,
     /// Bytes per host since the app started; survives proxy restarts.
     pub traffic: Arc<Traffic>,
+    /// The newest connection events, hidden ones too, for the MCP server.
+    recent: Mutex<VecDeque<ConnEvent>>,
+    /// The MCP server for AI agents, while it is switched on.
+    pub mcp: tokio::sync::Mutex<Option<crate::mcp::McpServer>>,
+    /// Why the MCP server could not start.
+    mcp_error: Mutex<Option<String>>,
 }
+
+/// Connection events kept for the MCP server's `connections`.
+const RECENT_EVENTS: usize = 2000;
 
 impl AppState {
     pub fn load() -> anyhow::Result<Self> {
@@ -88,6 +97,9 @@ impl AppState {
             health: Mutex::default(),
             health_poke: Arc::new(Notify::new()),
             traffic: Arc::default(),
+            recent: Mutex::default(),
+            mcp: tokio::sync::Mutex::default(),
+            mcp_error: Mutex::default(),
             dir,
         })
     }
@@ -148,6 +160,24 @@ impl AppState {
 
     pub fn hidden_stats(&self) -> MutexGuard<'_, RuleStats> {
         self.hidden_stats.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Keeps `batch` among the newest events, dropping the oldest.
+    pub fn remember_events(&self, batch: &[ConnEvent]) {
+        let mut recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        recent.extend(batch.iter().cloned());
+        let excess = recent.len().saturating_sub(RECENT_EVENTS);
+        recent.drain(..excess);
+    }
+
+    /// The newest events, oldest first.
+    pub fn recent_events(&self) -> Vec<ConnEvent> {
+        let recent = self.recent.lock().unwrap_or_else(|e| e.into_inner());
+        recent.iter().cloned().collect()
+    }
+
+    pub fn mcp_error(&self) -> MutexGuard<'_, Option<String>> {
+        self.mcp_error.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

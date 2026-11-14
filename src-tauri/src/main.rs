@@ -5,6 +5,7 @@ mod browsers;
 mod commands;
 mod events;
 mod health;
+mod mcp;
 mod presets;
 mod rules;
 mod runtime;
@@ -68,9 +69,12 @@ fn main() {
             let state = state::AppState::load()?;
             sync_at_startup(app.handle(), &state);
             commands::apply_theme(app.handle(), state.config().theme);
+            let mcp = mcp::settings_at_startup(&state);
             let poke = state.health_poke.clone();
             app.manage(state);
             tray::fit_main_window(app.handle());
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move { mcp::sync(&handle, &mcp).await });
             app.manage(updates::Updates::default());
             tray::create(app.handle())?;
             health::spawn_monitor(app.handle().clone(), poke);
@@ -109,6 +113,7 @@ fn main() {
             ui_commands::refresh_presets,
             ui_commands::get_rule_stats,
             ui_commands::get_hidden_stats,
+            ui_commands::get_mcp_status,
             ui_commands::add_rule_lines,
             ui_commands::set_preset_selected,
             ui_commands::export_rules,

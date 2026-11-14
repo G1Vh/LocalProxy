@@ -120,6 +120,8 @@ fn partial_file_fills_defaults() {
     assert_eq!(config.port, 8888);
     assert!(config.socks5_enabled);
     assert_eq!(config.theme, Theme::System);
+    assert_eq!(config.mcp, McpSettings::default());
+    assert!(!config.mcp.enabled);
     let rule = &config.rules[0];
     assert!(rule.enabled);
     assert_eq!(rule.match_type, MatchType::DomainAndSubdomains);

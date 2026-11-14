@@ -89,10 +89,14 @@ pub async fn apply_config(
     mut config: Config,
 ) -> Result<Config, String> {
     config.forget_missing_outbounds();
+    if config.mcp.enabled && config.mcp.token.is_empty() {
+        config.mcp.token = crate::mcp::new_token();
+    }
     let start_error = crate::runtime::sync_runtime(app, state, &mut config).await;
     config.save(&state.config_path).map_err(|e| e.to_string())?;
     *state.config() = config.clone();
     apply_theme(app, config.theme);
+    crate::mcp::sync(app, &config.mcp).await;
     tray::refresh(app, &config);
     crate::health::poke(app);
     if let Err(e) = app.emit(CONFIG_CHANGED, &config) {
