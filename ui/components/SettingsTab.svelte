@@ -141,18 +141,21 @@
       {#each THEMES as t}<option value={t.value}>{t.label}</option>{/each}
     </select>
   </label>
-  <label class="check">
-    <input
-      type="checkbox"
-      checked={config.socks5Enabled}
-      onchange={() => store.update((c) => (c.socks5Enabled = !c.socks5Enabled))}
-      disabled={store.busy}
-    />
-    <span>
-      Принимать SOCKS5 на том же порту
-      <span class="hint">— для ручной настройки (Telegram, SSH)</span>
-    </span>
-  </label>
+  <!-- The TUN needs SOCKS5 and turns it on by itself. -->
+  {#if !config.tunEnabled}
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={config.socks5Enabled}
+        onchange={() => store.update((c) => (c.socks5Enabled = !c.socks5Enabled))}
+        disabled={store.busy}
+      />
+      <span>
+        Принимать SOCKS5 на том же порту
+        <span class="hint">— для ручной настройки (Telegram, SSH)</span>
+      </span>
+    </label>
+  {/if}
   <label class="check">
     <input
       type="checkbox"
