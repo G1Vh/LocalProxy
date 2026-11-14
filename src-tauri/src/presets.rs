@@ -34,6 +34,9 @@ pub struct Preset {
     /// What the set covers and its known limits, shown in the UI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Heading the Presets tab lists the set under (AI, development...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Domains, masks or subnets; see [`classify`].
     pub domains: Vec<String>,
 }

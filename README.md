@@ -19,7 +19,8 @@ VPN-туннель WireGuard / AmneziaWG / SSTP), всё остальное — 
 - **Правила по программам**: `discord.exe` (или маска, или полный путь) — весь трафик программы идёт по правилу,
   куда бы она ни обращалась; такое правило важнее правил по адресам. В режиме TUN программа известна
   у каждого соединения, в режиме прокси — только у программ, которые ходят через LocalProxy.
-- **Готовые наборы доменов** — OpenAI, Anthropic, GitHub, Gemini, YouTube, Telegram, Discord, Netflix. Набор — это подписка:
+- **Готовые наборы доменов** на своей вкладке, по группам: OpenAI, Anthropic, Gemini, Grok, Gemini Notebook
+  (NotebookLM), GitHub Copilot, JetBrains, YouTube, Netflix, Telegram, Discord, Notion. Набор — это подписка:
   список обновляется с GitHub без обновления программы, домены добавляются и убираются сами.
 - **Каналы**: HTTP-прокси, SOCKS5-прокси, WireGuard и AmneziaWG (конфиг `.conf` вставляется как есть),
   SSTP (Windows RRAS, MikroTik, SoftEther; вход по MS-CHAPv2 или PAP, самоподписанный сертификат — по отпечатку).

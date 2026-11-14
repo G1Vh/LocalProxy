@@ -25,6 +25,7 @@ fn selected_presets_expand_from_the_current_list() {
             id: "yt".into(),
             name: "YouTube".into(),
             note: None,
+            group: None,
             domains: domains.iter().map(|d| d.to_string()).collect(),
         }],
     };

@@ -2106,7 +2106,7 @@ checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "localproxy"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "anyhow",
  "proxy-core",
@@ -2120,6 +2120,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tauri-plugin-window-state",
  "tempfile",
  "tokio",
  "tracing",
@@ -3058,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "proxy-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -4246,6 +4247,21 @@ dependencies = [
  "tokio",
  "url",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tauri-plugin-window-state"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d6815cab7b212f9cfe16a9d79d8d22f9e14159e4a9460f7dec1467167a008e3"
+dependencies = [
+ "bitflags 2.13.2",
+ "log",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -17,12 +17,19 @@ mod ui_commands;
 mod updates;
 
 use tauri::{Manager, RunEvent};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use tracing_subscriber::EnvFilter;
 
 /// Passed by the autostart entry so the app starts straight into the tray.
 const MINIMIZED_ARG: &str = "--minimized";
 /// Run by the uninstaller: put the Windows settings back and exit.
 const RESTORE_SYSTEM_ARG: &str = "--restore-system";
+
+/// What is remembered of the window; not whether it was shown, which the
+/// tray and the start-minimized flag decide.
+const WINDOW_STATE: StateFlags = StateFlags::SIZE
+    .union(StateFlags::POSITION)
+    .union(StateFlags::MAXIMIZED);
 
 fn main() {
     tracing_subscriber::fmt()
@@ -49,6 +56,12 @@ fn main() {
             Some(vec![MINIMIZED_ARG]),
         ))
         .plugin(tauri_plugin_dialog::init())
+        // Size, place and maximized state of the window, as the user left them.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(WINDOW_STATE)
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
@@ -57,6 +70,7 @@ fn main() {
             commands::apply_theme(app.handle(), state.config().theme);
             let poke = state.health_poke.clone();
             app.manage(state);
+            tray::fit_main_window(app.handle());
             app.manage(updates::Updates::default());
             tray::create(app.handle())?;
             health::spawn_monitor(app.handle().clone(), poke);
@@ -75,6 +89,9 @@ fn main() {
             // Closing the window keeps the app running in the tray.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                // The app lives on in the tray and may never exit cleanly
+                // (shutdown, an update): keep the window's size now.
+                let _ = window.app_handle().save_window_state(WINDOW_STATE);
                 let _ = window.hide();
             }
         })

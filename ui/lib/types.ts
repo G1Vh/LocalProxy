@@ -143,6 +143,8 @@ export interface Preset {
   id: string;
   name: string;
   note: string | null;
+  /** Heading the set is listed under; absent in older lists. */
+  group?: string | null;
   entries: PresetEntry[];
 }
 

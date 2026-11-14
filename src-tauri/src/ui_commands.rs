@@ -168,6 +168,7 @@ pub struct PresetView {
     id: String,
     name: String,
     note: Option<String>,
+    group: Option<String>,
     entries: Vec<Entry>,
 }
 
@@ -194,6 +195,7 @@ fn presets_info(state: &AppState) -> PresetsInfo {
                 id: preset.id.clone(),
                 name: preset.name.clone(),
                 note: preset.note.clone(),
+                group: preset.group.clone(),
                 entries: preset.entries(),
             })
             .collect(),

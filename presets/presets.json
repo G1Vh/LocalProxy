@@ -1,9 +1,10 @@
 {
-  "revision": 3,
+  "revision": 4,
   "presets": [
     {
       "id": "openai",
       "name": "OpenAI / ChatGPT",
+      "group": "ИИ",
       "domains": [
         "openai.com",
         "chatgpt.com",
@@ -14,6 +15,7 @@
     {
       "id": "anthropic",
       "name": "Anthropic / Claude",
+      "group": "ИИ",
       "domains": [
         "anthropic.com",
         "claude.ai",
@@ -22,28 +24,85 @@
       ]
     },
     {
-      "id": "github",
-      "name": "GitHub / Copilot",
+      "id": "gemini",
+      "name": "Google Gemini / AI Studio",
+      "group": "ИИ",
       "domains": [
-        "github.com",
-        "githubusercontent.com",
-        "githubassets.com",
-        "githubcopilot.com"
+        "gemini.google.com",
+        "gemini.google",
+        "gemini.gstatic.com",
+        "geminiweb-pa.clients6.google.com",
+        "geminiweb-pa.clients.google.com",
+        "robinfrontend-pa.googleapis.com",
+        "proactivebackend-pa.googleapis.com",
+        "geller-pa.googleapis.com",
+        "speechs3proto2-pa.googleapis.com",
+        "aistudio.google.com",
+        "ai.studio",
+        "makersuite.google.com",
+        "alkalimakersuite-pa.clients6.google.com",
+        "webchannel-alkalimakersuite-pa.clients6.google.com",
+        "alkalicore-pa.clients6.google.com",
+        "generativelanguage.googleapis.com",
+        "ai.google.dev"
       ]
     },
     {
-      "id": "gemini",
-      "name": "Google Gemini / AI Studio",
+      "id": "grok",
+      "name": "Grok / xAI",
+      "group": "ИИ",
+      "note": "Вход через X не работает: входите по почте, Google или Apple.",
       "domains": [
-        "gemini.google.com",
-        "aistudio.google.com",
-        "generativelanguage.googleapis.com"
+        "grok.com",
+        "x.ai",
+        "accounts.spacex.ai",
+        "grokusercontent.com"
+      ]
+    },
+    {
+      "id": "notebook",
+      "name": "Gemini Notebook (NotebookLM)",
+      "group": "ИИ",
+      "note": "Бывший NotebookLM.",
+      "domains": [
+        "notebook.google.com",
+        "notebook.google",
+        "notebooklm.google.com",
+        "notebooklm.google",
+        "notebooklm-pa.googleapis.com",
+        "notebooklm.googleapis.com"
+      ]
+    },
+    {
+      "id": "github",
+      "name": "GitHub Copilot",
+      "group": "Разработка",
+      "note": "Только Copilot, сам GitHub идёт напрямую.",
+      "domains": [
+        "githubcopilot.com",
+        "copilot-proxy.githubusercontent.com",
+        "origin-tracker.githubusercontent.com",
+        "copilot-telemetry.githubusercontent.com",
+        "copilot-reports.github.com",
+        "default.exp-tas.com"
+      ]
+    },
+    {
+      "id": "jetbrains",
+      "name": "JetBrains",
+      "group": "Разработка",
+      "domains": [
+        "jetbrains.com",
+        "jetbrains.ai",
+        "grazie.aws.intellij.net",
+        "grazie.ai",
+        "jb.gg"
       ]
     },
     {
       "id": "youtube",
       "name": "YouTube",
-      "note": "Сайт, видео (googlevideo.com), превью и аватарки (ytimg.com, ggpht.com, yt3.googleusercontent.com), короткие ссылки youtu.be, встроенный плеер и API приложений. Общие домены Google (gstatic.com, googleusercontent.com, play.google.com) не включены — иначе через outbound пойдёт и поиск, и почта.",
+      "group": "Видео",
       "domains": [
         "youtube.com",
         "youtu.be",
@@ -53,7 +112,8 @@
         "youtubekids.com",
         "withyoutube.com",
         "ytimg.com",
-        "ggpht.com",
+        "yt3.ggpht.com",
+        "yt4.ggpht.com",
         "googlevideo.com",
         "yt3.googleusercontent.com",
         "youtubei.googleapis.com",
@@ -64,9 +124,26 @@
       ]
     },
     {
+      "id": "netflix",
+      "name": "Netflix",
+      "group": "Видео",
+      "domains": [
+        "netflix.com",
+        "netflix.net",
+        "nflxext.com",
+        "nflximg.com",
+        "nflximg.net",
+        "nflxso.net",
+        "nflxvideo.net",
+        "nflxsearch.net",
+        "fast.com"
+      ]
+    },
+    {
       "id": "telegram",
       "name": "Telegram",
-      "note": "Веб-версия, ссылки t.me, Telegraph, CDN и подсети серверов Telegram (core.telegram.org/resources/cidr.txt). Приложение Telegram Desktop системный прокси не использует — укажите в нём SOCKS5 127.0.0.1:3128 (Настройки → Продвинутые → Тип соединения), подсети из набора отправят его трафик через outbound.",
+      "group": "Общение",
+      "note": "В режиме системного прокси укажите в Telegram Desktop SOCKS5 127.0.0.1:3128.",
       "domains": [
         "telegram.org",
         "t.me",
@@ -95,7 +172,8 @@
     {
       "id": "discord",
       "name": "Discord",
-      "note": "Сайт, приложение, CDN, вложения, приглашения discord.gg. Голосовые каналы работают по UDP и через HTTP-прокси не проходят.",
+      "group": "Общение",
+      "note": "Голос идёт через канал только в режиме TUN.",
       "domains": [
         "discord.com",
         "discord.gg",
@@ -118,19 +196,16 @@
       ]
     },
     {
-      "id": "netflix",
-      "name": "Netflix",
-      "note": "Сайт, приложение, картинки и видеопоток (nflxvideo.net), а также fast.com — тест скорости Netflix.",
+      "id": "notion",
+      "name": "Notion",
+      "group": "Работа",
       "domains": [
-        "netflix.com",
-        "netflix.net",
-        "nflxext.com",
-        "nflximg.com",
-        "nflximg.net",
-        "nflxso.net",
-        "nflxvideo.net",
-        "nflxsearch.net",
-        "fast.com"
+        "notion.so",
+        "notion.com",
+        "notion.site",
+        "notion-static.com",
+        "notionusercontent.com",
+        "notion.new"
       ]
     }
   ]

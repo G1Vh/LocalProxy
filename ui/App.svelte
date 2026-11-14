@@ -3,12 +3,13 @@
   import * as api from "./lib/api";
   import { store } from "./lib/store.svelte";
   import RulesTab from "./components/RulesTab.svelte";
+  import PresetsTab from "./components/PresetsTab.svelte";
   import ConnectionsTab from "./components/ConnectionsTab.svelte";
   import OutboundsTab from "./components/OutboundsTab.svelte";
   import SettingsTab from "./components/SettingsTab.svelte";
   import PortsTab from "./components/PortsTab.svelte";
 
-  type Tab = "rules" | "ports" | "connections" | "outbounds" | "settings";
+  type Tab = "rules" | "presets" | "ports" | "connections" | "outbounds" | "settings";
   let tab = $state<Tab>("rules");
 
   onMount(() => {
@@ -161,7 +162,10 @@
 
   <nav>
     <button class:active={tab === "rules"} onclick={() => (tab = "rules")}>
-      Правила <span class="count" title="правил + наборов">{config?.rules.length ?? 0} + {presetCount}</span>
+      Правила <span class="count">{config?.rules.length ?? 0}</span>
+    </button>
+    <button class:active={tab === "presets"} onclick={() => (tab = "presets")}>
+      Наборы {#if presetCount}<span class="count" title="выбрано">{presetCount}</span>{/if}
     </button>
     {#if !config?.tunEnabled}
       <button class:active={tab === "ports"} onclick={() => (tab = "ports")}>
@@ -182,6 +186,8 @@
       {#if !store.error}<p class="hint">Загрузка…</p>{/if}
     {:else if tab === "rules"}
       <RulesTab />
+    {:else if tab === "presets"}
+      <PresetsTab />
     {:else if tab === "ports"}
       <PortsTab />
     {:else if tab === "connections"}

@@ -77,6 +77,34 @@ pub fn show_health(app: &AppHandle, health: &Health) {
     }
 }
 
+/// Shrinks the window to the screen it is on if it does not fit (the
+/// default size on a small or highly scaled screen) and centers it then.
+pub fn fit_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let (Ok(Some(monitor)), Ok(outer), Ok(inner)) = (
+        window.current_monitor(),
+        window.outer_size(),
+        window.inner_size(),
+    ) else {
+        return;
+    };
+    let area = monitor.work_area().size;
+    if outer.width <= area.width && outer.height <= area.height {
+        return;
+    }
+    // The frame (title bar, borders) comes on top of the inner size.
+    let frame_w = outer.width.saturating_sub(inner.width);
+    let frame_h = outer.height.saturating_sub(inner.height);
+    let size = tauri::PhysicalSize::new(
+        inner.width.min(area.width.saturating_sub(frame_w)),
+        inner.height.min(area.height.saturating_sub(frame_h)),
+    );
+    let _ = window.set_size(size);
+    let _ = window.center();
+}
+
 pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
