@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun/netstack"
 	"golang.org/x/net/dns/dnsmessage"
 )
@@ -370,6 +371,126 @@ func TestHostCacheFakes(t *testing.T) {
 	}
 	if isFake(netip.MustParseAddr("93.184.216.34")) {
 		t.Fatal("real address taken for fake")
+	}
+}
+
+// A lookup that fails gets SERVFAIL, never a fake address: the fake would
+// stay in the program's cache after the TUN is gone. Only a name the real
+// DNS does not know is faked.
+func TestDNSFakesOnlyUnknownNames(t *testing.T) {
+	query := func(name string) []byte {
+		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 7, RecursionDesired: true})
+		b.StartQuestions()
+		b.Question(dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
+		q, _ := b.Finish()
+		return q
+	}
+	parse := func(resp []byte) (dnsmessage.RCode, []netip.Addr) {
+		var p dnsmessage.Parser
+		hdr, err := p.Start(resp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.SkipAllQuestions()
+		var addrs []netip.Addr
+		for {
+			if _, err := p.AnswerHeader(); err != nil {
+				break
+			}
+			a, err := p.AResource()
+			if err != nil {
+				t.Fatal(err)
+			}
+			addrs = append(addrs, netip.AddrFrom4(a.A))
+		}
+		return hdr.RCode, addrs
+	}
+	ctx := context.Background()
+
+	r := newResolver(fakeDNS)
+	if rcode, addrs := parse(r.answer(ctx, query("mysql.office.lan."))); rcode != dnsmessage.RCodeSuccess || len(addrs) != 1 || !isFake(addrs[0]) {
+		t.Fatalf("unknown name: %v %v, want a fake address", rcode, addrs)
+	}
+
+	r = newResolver(func(context.Context, []byte) ([]byte, error) { return nil, errors.New("timeout") })
+	if rcode, addrs := parse(r.answer(ctx, query("api.example.com."))); rcode != dnsmessage.RCodeServerFailure || len(addrs) != 0 {
+		t.Fatalf("failed lookup: %v %v, want SERVFAIL", rcode, addrs)
+	}
+
+	servfail := func(_ context.Context, q []byte) ([]byte, error) {
+		var p dnsmessage.Parser
+		hdr, _ := p.Start(q)
+		question, _ := p.Question()
+		b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: hdr.ID, Response: true, RCode: dnsmessage.RCodeServerFailure})
+		b.StartQuestions()
+		b.Question(question)
+		return b.Finish()
+	}
+	r = newResolver(servfail)
+	if rcode, addrs := parse(r.answer(ctx, query("api.example.com."))); rcode != dnsmessage.RCodeServerFailure || len(addrs) != 0 {
+		t.Fatalf("real SERVFAIL: %v %v, want it passed through", rcode, addrs)
+	}
+}
+
+// resetWatch is the adapter as the engine sees it: it notes whether a TCP
+// RST was written to it before it was closed.
+type resetWatch struct {
+	tun.Device
+	mu     sync.Mutex
+	closed bool
+	reset  bool
+}
+
+func (d *resetWatch) Write(bufs [][]byte, offset int) (int, error) {
+	d.mu.Lock()
+	for _, b := range bufs {
+		pkt := b[offset:]
+		// IPv4, TCP, RST flag set.
+		if !d.closed && len(pkt) >= 20 && pkt[0]>>4 == 4 && pkt[9] == 6 {
+			if ihl := int(pkt[0]&0x0f) * 4; len(pkt) >= ihl+14 && pkt[ihl+13]&0x04 != 0 {
+				d.reset = true
+			}
+		}
+	}
+	d.mu.Unlock()
+	return d.Device.Write(bufs, offset)
+}
+
+func (d *resetWatch) Close() error {
+	d.mu.Lock()
+	d.closed = true
+	d.mu.Unlock()
+	return d.Device.Close()
+}
+
+// Closing the engine resets the connections still open while the adapter
+// is there, so programs reconnect at once instead of waiting out a timeout.
+func TestCloseResetsOpenConnections(t *testing.T) {
+	proxy := startFakeProxy(t, startEcho(t))
+	dev, tnet, err := netstack.CreateNetTUN([]netip.Addr{netip.MustParseAddr("10.0.0.2")}, []netip.Addr{DNSAddr}, 1500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watch := &resetWatch{Device: dev}
+	e, err := Start(watch, Options{Socks: proxy.addr, DNS: fakeDNS, MTU: 1500})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(e.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := tnet.DialContext(ctx, "tcp", "93.184.216.34:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	echoOver(t, c, "before close")
+
+	e.Close()
+	watch.mu.Lock()
+	defer watch.mu.Unlock()
+	if !watch.reset {
+		t.Fatal("no RST reached the adapter before it was closed")
 	}
 }
 

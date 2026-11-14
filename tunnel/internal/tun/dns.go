@@ -5,9 +5,11 @@ package tun
 // remembered address → name. When a connection to such an address comes
 // through the TUN, LocalProxy gets the name and applies its domain rules.
 //
-// A name the real DNS does not know (an office name such as
+// A name the real DNS does not know (NXDOMAIN: an office name such as
 // mysql.office.lan reachable only through a channel) gets a fake address;
 // connections to it reach LocalProxy by name, and the channel resolves it.
+// A failed lookup is answered SERVFAIL, never faked: a fake address for a
+// real name would outlive the TUN in the program's cache.
 
 import (
 	"context"
@@ -139,22 +141,28 @@ func (r *resolver) answer(ctx context.Context, query []byte) []byte {
 
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
-	resp, err := r.exchange(ctx, query)
-	if err == nil {
+	unknown := false
+	if resp, err := r.exchange(ctx, query); err == nil {
 		rcode, ok := r.record(resp, name)
-		if ok && rcode != dnsmessage.RCodeNameError && rcode != dnsmessage.RCodeServerFailure {
+		if ok && rcode != dnsmessage.RCodeNameError {
 			return resp
 		}
+		unknown = ok
 	}
 	// Unknown to the real DNS: a fake address for A, nothing for the rest.
+	// No usable answer at all: SERVFAIL, so the program asks again.
+	rcode := dnsmessage.RCodeSuccess
+	if !unknown {
+		rcode = dnsmessage.RCodeServerFailure
+	}
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
-		ID: hdr.ID, Response: true, RecursionDesired: hdr.RecursionDesired, RecursionAvailable: true,
+		ID: hdr.ID, Response: true, RecursionDesired: hdr.RecursionDesired, RecursionAvailable: true, RCode: rcode,
 	})
 	b.EnableCompression()
 	b.StartQuestions()
 	b.Question(q)
 	b.StartAnswers()
-	if q.Type == dnsmessage.TypeA && q.Class == dnsmessage.ClassINET && name != "" {
+	if unknown && q.Type == dnsmessage.TypeA && q.Class == dnsmessage.ClassINET && name != "" {
 		b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: fakeTTL},
 			dnsmessage.AResource{A: r.cache.fake(name).As4()})
 	}

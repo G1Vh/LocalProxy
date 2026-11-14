@@ -187,6 +187,18 @@ func (s *System) TakeTraffic() error {
 	return nil
 }
 
+// ReleaseTraffic undoes TakeTraffic while the adapter stays: new connections
+// and lookups go around it, and the ones still open can be reset through it.
+func (s *System) ReleaseTraffic() {
+	for _, p := range routes4 {
+		s.luid.DeleteRoute(p, netip.IPv4Unspecified())
+	}
+	for _, p := range routes6 {
+		s.luid.DeleteRoute(p, netip.IPv6Unspecified())
+	}
+	s.luid.FlushDNS(windows.AF_INET)
+}
+
 // Close removes the adapter, and with it its routes and DNS.
 func (s *System) Close() { s.Dev.Close() }
 

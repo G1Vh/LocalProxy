@@ -74,6 +74,7 @@ type Engine struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+	outDone   chan struct{} // toDevice has stopped
 	closeOnce sync.Once
 	wmu       sync.Mutex
 	pings     chan struct{}
@@ -109,19 +110,20 @@ func Start(dev tun.Device, opts Options) (*Engine, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
-		dev:    dev,
-		stack:  s,
-		ep:     ep,
-		opts:   opts,
-		dns:    newResolver(opts.DNS),
-		ctx:    ctx,
-		cancel: cancel,
-		pings:  make(chan struct{}, maxPings),
+		dev:     dev,
+		stack:   s,
+		ep:      ep,
+		opts:    opts,
+		dns:     newResolver(opts.DNS),
+		ctx:     ctx,
+		cancel:  cancel,
+		pings:   make(chan struct{}, maxPings),
+		outDone: make(chan struct{}),
 	}
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, tcp.NewForwarder(s, 0, maxPending, e.handleTCP).HandlePacket)
 	s.SetTransportProtocolHandler(udp.ProtocolNumber, udp.NewForwarder(s, e.handleUDP).HandlePacket)
 
-	e.wg.Add(2)
+	e.wg.Add(1)
 	go e.fromDevice()
 	go e.toDevice()
 	return e, nil
@@ -157,13 +159,19 @@ func (e *Engine) Stats() Stats {
 	return Stats{TCP: e.tcpCount.Load(), UDP: e.udpCount.Load(), DNS: e.dnsCount.Load(), Refused: e.refused.Load()}
 }
 
-// Close stops the engine; the device is closed too.
+// Close stops the engine; the device is closed too. Connections still open
+// are reset first, while the adapter is there to carry the RSTs: programs
+// see the break at once and reconnect, instead of hanging until a timeout.
 func (e *Engine) Close() {
 	e.closeOnce.Do(func() {
+		e.stack.Close()
 		e.cancel()
+		<-e.outDone
+		for pkb := e.ep.Read(); pkb != nil; pkb = e.ep.Read() {
+			e.writePacket(pkb)
+		}
 		e.dev.Close()
 		e.ep.Close()
-		e.stack.Close()
 		e.wg.Wait()
 	})
 }
@@ -206,17 +214,21 @@ func (e *Engine) fromDevice() {
 }
 
 func (e *Engine) toDevice() {
-	defer e.wg.Done()
+	defer close(e.outDone)
 	for {
 		pkb := e.ep.ReadContext(e.ctx)
 		if pkb == nil {
 			return
 		}
-		view := pkb.ToView()
-		pkb.DecRef()
-		e.write(view.AsSlice())
-		view.Release()
+		e.writePacket(pkb)
 	}
+}
+
+func (e *Engine) writePacket(pkb *stack.PacketBuffer) {
+	view := pkb.ToView()
+	pkb.DecRef()
+	e.write(view.AsSlice())
+	view.Release()
 }
 
 func (e *Engine) write(pkt []byte) {

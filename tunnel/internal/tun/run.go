@@ -84,7 +84,12 @@ func Run(control, token, socks string, parentPID int, stop <-chan struct{}) erro
 	if err != nil {
 		return fail(err)
 	}
-	defer eng.Close()
+	// Routes go first, so programs reconnect around the TUN; then the
+	// engine resets what is still open through it; then the adapter goes.
+	defer func() {
+		sys.ReleaseTraffic()
+		eng.Close()
+	}()
 	log.Printf("tun: адаптер готов, физический интерфейс %d/%d, DNS %v", sys.Physical.Index4, sys.Physical.Index6, sys.Physical.DNS)
 	send(map[string]any{"event": "interface", "v4": sys.Physical.Index4, "v6": sys.Physical.Index6})
 

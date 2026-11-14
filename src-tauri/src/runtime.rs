@@ -25,6 +25,12 @@ pub async fn sync_runtime(
     state: &AppState,
     config: &mut Config,
 ) -> Option<String> {
+    // The TUN catches console programs by itself. Variables would outlive
+    // LocalProxy in every program started meanwhile, pointing it at a port
+    // nobody listens on until it is restarted.
+    if config.tun_enabled {
+        config.set_env_vars = false;
+    }
     let mut slot = state.proxy.lock().await;
 
     if !config.enabled {
@@ -65,19 +71,26 @@ pub async fn sync_runtime(
     let server = slot.as_ref().expect("started above");
     server.update(&effective);
 
-    let desired = Desired {
-        pac_url: Some(server.pac_url()),
-        env_port: config.set_env_vars.then_some(server.port()),
+    let tun_error = tun_error.or(activate_tun(app, state, config).await);
+    // Windows is pointed at us only without the TUN (or when it failed to
+    // start): with it, a kill leaves nothing behind in the system.
+    let desired = if config.tun_enabled {
+        Desired::default()
+    } else {
+        Desired {
+            pac_url: Some(server.pac_url()),
+            env_port: config.set_env_vars.then_some(server.port()),
+        }
     };
     if let Err(e) = apply_system(state, desired).await {
         config.enabled = false;
         let _ = apply_system(state, Desired::default()).await;
+        sync_tun(app, state, config).await;
         if let Some(server) = slot.take() {
             server.stop().await;
         }
         return Some(e);
     }
-    let tun_error = tun_error.or(activate_tun(app, state, config).await);
     // Kept for the window, which may open only after this (at logon).
     state.set_start_error(tun_error);
     None

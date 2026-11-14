@@ -164,18 +164,20 @@
       Уведомлять о падении и восстановлении каналов
     </span>
   </label>
-  <label class="check">
-    <input
-      type="checkbox"
-      checked={config.setEnvVars}
-      onchange={() => store.update((c) => (c.setEnvVars = !c.setEnvVars))}
-      disabled={store.busy}
-    />
-    <span>
-      HTTP_PROXY / HTTPS_PROXY для консольных программ
-      <span class="hint">— для запущенных после включения</span>
-    </span>
-  </label>
+  {#if !config.tunEnabled}
+    <label class="check">
+      <input
+        type="checkbox"
+        checked={config.setEnvVars}
+        onchange={() => store.update((c) => (c.setEnvVars = !c.setEnvVars))}
+        disabled={store.busy}
+      />
+      <span>
+        HTTP_PROXY / HTTPS_PROXY для консольных программ
+        <span class="hint">— для запущенных после включения; после выхода их надо перезапустить</span>
+      </span>
+    </label>
+  {/if}
   <label class="check">
     <input type="checkbox" checked={autostart} onchange={toggleAutostart} />
     <span>Запускать с Windows (в трее)</span>
