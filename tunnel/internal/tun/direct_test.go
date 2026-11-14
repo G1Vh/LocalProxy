@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -70,13 +71,9 @@ func (p *delegatingProxy) serve(c net.Conn) {
 	}
 	p.mu.Lock()
 	p.seen = append(p.seen, kind+" "+joinHostPort(host, port)+" by "+pass+
-		": dial "+string('0'+status[0])+", up "+itoa(up)+", down "+itoa(down))
+		": dial "+string('0'+status[0])+", up "+strconv.FormatUint(up, 10)+", down "+strconv.FormatUint(down, 10))
 	p.mu.Unlock()
 	p.done <- struct{}{}
-}
-
-func itoa(n uint64) string {
-	return netip.AddrPortFrom(netip.IPv4Unspecified(), uint16(n)).String()[8:]
 }
 
 func TestDirectRoutesAreOurs(t *testing.T) {

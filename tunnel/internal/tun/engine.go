@@ -209,7 +209,7 @@ func (e *Engine) toDevice() {
 	defer e.wg.Done()
 	for {
 		pkb := e.ep.ReadContext(e.ctx)
-		if pkb.IsNil() {
+		if pkb == nil {
 			return
 		}
 		view := pkb.ToView()
@@ -366,22 +366,24 @@ func pipe(a, b net.Conn, t *tally) {
 	b.Close()
 }
 
-func (e *Engine) handleUDP(r *udp.ForwarderRequest) {
+// handleUDP takes every new UDP flow; true: the packet is ours either way.
+func (e *Engine) handleUDP(r *udp.ForwarderRequest) bool {
 	id := r.ID()
 	dst, port := addrOf(id.LocalAddress), id.LocalPort
 	var wq waiter.Queue
 	ep, terr := r.CreateEndpoint(&wq)
 	if terr != nil {
-		return
+		return true
 	}
-	conn := gonet.NewUDPConn(e.stack, &wq, ep)
+	conn := gonet.NewUDPConn(&wq, ep)
 	if port == 53 {
 		// Any DNS query, to whatever server, is answered here.
 		go e.serveDNS(conn)
-		return
+		return true
 	}
 	src := netip.AddrPortFrom(addrOf(id.RemoteAddress), id.RemotePort)
 	go e.relayUDP(conn, src, dst, port)
+	return true
 }
 
 func (e *Engine) serveDNS(conn *gonet.UDPConn) {

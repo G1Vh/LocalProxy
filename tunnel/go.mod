@@ -8,11 +8,12 @@ require (
 	golang.org/x/net v0.62.0
 	golang.org/x/sys v0.50.0
 	golang.zx2c4.com/wireguard/windows v1.1.1
-	gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489
+	gvisor.dev/gvisor v0.0.0-20261114041823-7de0475c2358
 )
 
 require (
 	github.com/google/btree v1.1.3 // indirect
-	golang.org/x/time v0.9.0 // indirect
+	golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 )
