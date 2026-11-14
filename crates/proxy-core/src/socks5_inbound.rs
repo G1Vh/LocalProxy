@@ -9,7 +9,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
@@ -35,7 +35,7 @@ const REP_ADDRESS_NOT_SUPPORTED: u8 = 8;
 /// Username that carries the program's exe path in the password.
 const PROCESS_USER: &[u8] = b"process";
 
-pub async fn serve(mut client: TcpStream, router: Arc<Router>, process: Option<Arc<str>>) {
+pub async fn serve(mut client: TcpStream, router: Arc<Router>) {
     let (command, target, named) = match timeout(HANDSHAKE_TIMEOUT, handshake(&mut client)).await {
         Ok(Ok(Some(request))) => request,
         Ok(Ok(None)) => return,
@@ -49,7 +49,11 @@ pub async fn serve(mut client: TcpStream, router: Arc<Router>, process: Option<A
         }
     };
 
-    let process = named.map(Arc::from).or(process);
+    // The TUN names the program itself; looking it up costs a walk through
+    // the system's TCP table, so only for clients that did not.
+    let process = named
+        .map(Arc::from)
+        .or_else(|| crate::process::of_local_client(&client));
     if command == CMD_UDP_ASSOCIATE {
         // The address in the request is only a hint about the client; ignored.
         return socks5_udp::associate(client, router, process).await;
@@ -61,7 +65,7 @@ pub async fn serve(mut client: TcpStream, router: Arc<Router>, process: Option<A
     {
         Ok(mut upstream) => {
             if reply(&mut client, REP_SUCCEEDED).await.is_ok()
-                && let Err(e) = copy_bidirectional(&mut client, &mut upstream).await
+                && let Err(e) = crate::stream::relay(&mut client, &mut upstream).await
             {
                 tracing::trace!(%target, "socks5 tunnel closed: {e}");
             }

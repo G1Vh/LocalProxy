@@ -23,7 +23,10 @@ import (
 
 const (
 	adapterName = "LocalProxy"
-	mtu         = 1500
+	// A large MTU between Windows and our stack: six times fewer packets to
+	// carry for the same bytes, and packets are what costs here. Only the
+	// TUN sees it; real sockets go out with the physical interface's MTU.
+	mtu = 9000
 )
 
 // A fixed GUID keeps Windows from piling up "LocalProxy 2", "3"... network
@@ -175,6 +178,7 @@ func (s *System) TakeTraffic() error {
 		}
 		iface.UseAutomaticMetric = false
 		iface.Metric = 1
+		iface.NLMTU = mtu
 		iface.Set()
 	}
 	if err := s.luid.SetDNS(windows.AF_INET, []netip.Addr{DNSAddr}, nil); err != nil {

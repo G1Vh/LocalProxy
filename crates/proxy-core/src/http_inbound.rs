@@ -10,7 +10,6 @@ use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use tokio::io::copy_bidirectional;
 use tokio::net::TcpStream;
 
 use crate::pac;
@@ -88,7 +87,7 @@ async fn connect(req: Request<Incoming>, ctx: ConnCtx) -> Response<Body> {
         match hyper::upgrade::on(req).await {
             Ok(upgraded) => {
                 let mut client = TokioIo::new(upgraded);
-                if let Err(e) = copy_bidirectional(&mut client, &mut upstream).await {
+                if let Err(e) = crate::stream::relay(&mut client, &mut upstream).await {
                     tracing::trace!(%target, "tunnel closed: {e}");
                 }
             }
@@ -187,7 +186,7 @@ async fn forward(mut req: Request<Incoming>, ctx: ConnCtx) -> Response<Body> {
             match tokio::try_join!(client_upgrade, server_upgrade) {
                 Ok((client, server)) => {
                     let (mut client, mut server) = (TokioIo::new(client), TokioIo::new(server));
-                    let _ = copy_bidirectional(&mut client, &mut server).await;
+                    let _ = crate::stream::relay(&mut client, &mut server).await;
                 }
                 Err(e) => tracing::debug!("upgrade failed: {e}"),
             }

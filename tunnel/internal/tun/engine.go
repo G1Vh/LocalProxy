@@ -35,6 +35,9 @@ const (
 	udpIdle    = 60 * time.Second
 	dnsIdle    = 10 * time.Second
 	maxPending = 2048
+	// Packets the stack may queue for the adapter; a full queue drops them
+	// and costs a retransmit.
+	queueLen = 4096
 )
 
 // Options of the engine.
@@ -83,7 +86,10 @@ func Start(dev tun.Device, opts Options) (*Engine, error) {
 		NetworkProtocols:   []stack.NetworkProtocolFactory{ipv4.NewProtocol, ipv6.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol},
 	})
-	ep := channel.New(1024, uint32(opts.MTU), "")
+	ep := channel.New(queueLen, uint32(opts.MTU), "")
+	// Packets from the TUN come from Windows' own stack with valid
+	// checksums: checking them again is wasted work.
+	ep.LinkEPCapabilities |= stack.CapabilityRXChecksumOffload
 	if err := s.CreateNIC(nicID, ep); err != nil {
 		return nil, errors.New(err.String())
 	}
@@ -95,8 +101,7 @@ func Start(dev tun.Device, opts Options) (*Engine, error) {
 		{Destination: header.IPv4EmptySubnet, NIC: nicID},
 		{Destination: header.IPv6EmptySubnet, NIC: nicID},
 	})
-	sack := tcpip.TCPSACKEnabled(true)
-	s.SetTransportProtocolOption(tcp.ProtocolNumber, &sack)
+	tuneTCP(s)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
@@ -117,6 +122,29 @@ func Start(dev tun.Device, opts Options) (*Engine, error) {
 	go e.toDevice()
 	return e, nil
 }
+
+// tuneTCP sets the stack's TCP the way other userspace stacks on Windows
+// do (Tailscale, sing-box, Xray): CUBIC with buffers that may grow to 8 MiB
+// suits fast links better than gVisor's Reno capped at 4 MiB; RACK loss
+// detection is off, as it stalls connections under load.
+func tuneTCP(s *stack.Stack) {
+	opts := []tcpip.SettableTransportProtocolOption{
+		ptr(tcpip.TCPSACKEnabled(true)),
+		ptr(tcpip.CongestionControlOption("cubic")),
+		ptr(tcpip.TCPModerateReceiveBufferOption(true)),
+		ptr(tcpip.TCPDelayEnabled(false)),
+		ptr(tcpip.TCPRecovery(0)),
+		&tcpip.TCPSendBufferSizeRangeOption{Min: 4 << 10, Default: 1 << 20, Max: 8 << 20},
+		&tcpip.TCPReceiveBufferSizeRangeOption{Min: 4 << 10, Default: 1 << 20, Max: 8 << 20},
+	}
+	for _, o := range opts {
+		if err := s.SetTransportProtocolOption(tcp.ProtocolNumber, o); err != nil {
+			log.Printf("tun: TCP option %T: %v", o, err)
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 // SetDNS switches the real DNS servers (the network changed).
 func (e *Engine) SetDNS(x Exchange) { e.dns.setExchange(x) }
@@ -272,10 +300,18 @@ func (e *Engine) acceptTCP(r *tcp.ForwarderRequest, up net.Conn) {
 	pipe(conn, up)
 }
 
+// copyBufs: 256 KiB per direction moves a bulk transfer in a few large
+// writes instead of many 32 KiB ones (io.Copy's default).
+var copyBufs = sync.Pool{New: func() any { b := make([]byte, 256<<10); return &b }}
+
 func pipe(a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	cp := func(dst, src net.Conn) {
-		io.Copy(dst, src)
+		buf := copyBufs.Get().(*[]byte)
+		// Hidden behind plain Reader/Writer so that io.CopyBuffer uses buf
+		// rather than the connections' own ReadFrom/WriteTo with small buffers.
+		io.CopyBuffer(struct{ io.Writer }{dst}, struct{ io.Reader }{src}, *buf)
+		copyBufs.Put(buf)
 		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 			cw.CloseWrite()
 		} else {

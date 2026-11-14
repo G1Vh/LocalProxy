@@ -13,6 +13,19 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Io for T {}
 
 pub type BoxIo = Box<dyn Io>;
 
+/// Buffer per direction when relaying: tokio's 8 KiB default means many
+/// small reads and writes for a bulk transfer.
+const RELAY_BUF: usize = 64 * 1024;
+
+/// Pipes `a` and `b` both ways until both sides are done.
+pub async fn relay<A, B>(a: &mut A, b: &mut B) -> io::Result<(u64, u64)>
+where
+    A: AsyncRead + AsyncWrite + Unpin + ?Sized,
+    B: AsyncRead + AsyncWrite + Unpin + ?Sized,
+{
+    tokio::io::copy_bidirectional_with_sizes(a, b, RELAY_BUF, RELAY_BUF).await
+}
+
 /// A stream that first yields bytes already read off the wire
 /// (e.g. data that arrived together with an upstream proxy's response headers).
 pub struct Prefixed<S> {

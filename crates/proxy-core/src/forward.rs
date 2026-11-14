@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::copy_bidirectional;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -203,7 +202,7 @@ async fn serve(mut client: TcpStream, forward: PortForward, router: Arc<Router>)
         .await
     {
         Ok(mut upstream) => {
-            let _ = copy_bidirectional(&mut client, &mut upstream).await;
+            let _ = crate::stream::relay(&mut client, &mut upstream).await;
         }
         Err(e) => tracing::debug!(%target, "forward refused: {e}"),
     }

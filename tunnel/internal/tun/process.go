@@ -22,10 +22,12 @@ var (
 )
 
 const (
-	tcpTableOwnerPidAll = 5
-	udpTableOwnerPid    = 1
-	afInet              = 2
-	afInet6             = 23
+	// Connections only, without listening sockets: a shorter table to fetch
+	// and scan for every new connection.
+	tcpTableOwnerPidConnections = 4
+	udpTableOwnerPid            = 1
+	afInet                      = 2
+	afInet6                     = 23
 	// A process id may be reused by another program after a while.
 	pathTTL = 30 * time.Second
 )
@@ -87,7 +89,7 @@ func rowAddr(b []byte, family uint32) netip.AddrPort {
 }
 
 func tcpOwner(family uint32, local, remote netip.AddrPort) (uint32, bool) {
-	rows, n := ownerTable(procGetExtendedTcpTable, family, tcpTableOwnerPidAll)
+	rows, n := ownerTable(procGetExtendedTcpTable, family, tcpTableOwnerPidConnections)
 	// MIB_TCPROW_OWNER_PID: state, local addr+port, remote addr+port, pid.
 	// MIB_TCP6ROW_OWNER_PID: local (addr, scope, port), remote (same), state, pid.
 	size, l, r, pid := 24, 4, 12, 20
