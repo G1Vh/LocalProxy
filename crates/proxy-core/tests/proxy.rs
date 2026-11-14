@@ -1277,3 +1277,120 @@ async fn program_rule_routes_by_process() {
         e.process
     );
 }
+
+/// Logs in as the TUN ("tun": it opens direct routes itself) and sends `cmd`.
+async fn socks5_as_tun(
+    proxy: u16,
+    process: &str,
+    cmd: u8,
+    host: &str,
+    port: u16,
+) -> (u8, TcpStream) {
+    let mut s = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy))
+        .await
+        .unwrap();
+    // All in one write, as the TUN sends it.
+    let mut msg = vec![5, 1, 2, 1, 3];
+    msg.extend_from_slice(b"tun");
+    msg.push(process.len() as u8);
+    msg.extend_from_slice(process.as_bytes());
+    msg.extend_from_slice(&[5, cmd, 0, 3, host.len() as u8]);
+    msg.extend_from_slice(host.as_bytes());
+    msg.extend_from_slice(&port.to_be_bytes());
+    s.write_all(&msg).await.unwrap();
+    let mut r = [0u8; 4];
+    s.read_exact(&mut r).await.unwrap();
+    assert_eq!(r, [5, 2, 1, 0], "login accepted");
+    let mut reply = [0u8; 10];
+    timeout(T, s.read_exact(&mut reply)).await.unwrap().unwrap();
+    (reply[1], s)
+}
+
+/// Bytes the TUN reports for a direct route it relays.
+async fn report_bytes(s: &mut TcpStream, up: u64, down: u64) {
+    let mut msg = up.to_be_bytes().to_vec();
+    msg.extend_from_slice(&down.to_be_bytes());
+    s.write_all(&msg).await.unwrap();
+}
+
+#[tokio::test]
+async fn tun_opens_direct_routes_itself() {
+    const DIRECT: u8 = 0x80;
+    const UDP_ROUTE: u8 = 0x83;
+    let echo = echo_server().await;
+    let (vpn_port, vpn_seen) = fake_http_upstream(None).await;
+    let vpn = Outbound {
+        id: Uuid::new_v4(),
+        name: "vpn".into(),
+        kind: OutboundKind::Http(endpoint(vpn_port)),
+    };
+    let config = Config {
+        port: 0,
+        enabled: true,
+        socks5_enabled: true,
+        outbounds: vec![vpn.clone()],
+        active_outbound_id: Some(vpn.id),
+        rules: vec![rule("localhost", RuleAction::Proxy)],
+        ..Config::default()
+    };
+    let proxy = start(&config).await;
+    let mut events = proxy.subscribe();
+    let app = r"C:\Apps\app.exe";
+
+    // A proxied route is still opened here, through the channel.
+    let (code, mut s) = socks5_as_tun(proxy.port(), app, 1, "localhost", echo).await;
+    assert_eq!(code, 0);
+    assert_echo(&mut s).await;
+    assert_eq!(vpn_seen.lines().len(), 1);
+    assert_eq!(events.recv().await.unwrap().route, RouteKind::Proxy);
+
+    // A direct one is left to the TUN: the feed hears of it once the TUN
+    // reports its dial, and the bytes it reports are counted.
+    let (code, mut s) = socks5_as_tun(proxy.port(), app, 1, "127.0.0.1", 443).await;
+    assert_eq!(code, DIRECT);
+    assert!(
+        events.try_recv().is_err(),
+        "no event before the dial report"
+    );
+    s.write_all(&[0]).await.unwrap();
+    report_bytes(&mut s, 5, 7).await;
+    report_bytes(&mut s, 1, 0).await;
+    let e = timeout(T, events.recv()).await.unwrap().unwrap();
+    assert_eq!(
+        (e.route, e.host.as_str(), e.process.as_deref()),
+        (RouteKind::Direct, "127.0.0.1", Some(app))
+    );
+    drop(s);
+    let counted = || {
+        proxy
+            .traffic()
+            .snapshot()
+            .into_iter()
+            .find(|r| r.host == "127.0.0.1" && !r.udp)
+            .map(|r| (r.up, r.down, r.connections, r.via_outbound))
+    };
+    timeout(T, async {
+        while counted() != Some((6, 7, 1, false)) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("reported bytes counted");
+
+    // A failed dial shows in the feed as an error, with nothing counted.
+    let (code, mut s) = socks5_as_tun(proxy.port(), app, 1, "127.0.0.2", 443).await;
+    assert_eq!(code, DIRECT);
+    s.write_all(&[1, 0, 0, 0x27, 0x4D]).await.unwrap(); // WSAECONNREFUSED
+    let e = timeout(T, events.recv()).await.unwrap().unwrap();
+    assert_eq!(e.route, RouteKind::Failed);
+    assert!(e.error.is_some());
+
+    // UDP: a direct flow is the TUN's too; a proxied one gets an association.
+    let (code, mut s) = socks5_as_tun(proxy.port(), app, UDP_ROUTE, "127.0.0.1", 53).await;
+    assert_eq!(code, DIRECT);
+    s.write_all(&[0]).await.unwrap();
+    let e = timeout(T, events.recv()).await.unwrap().unwrap();
+    assert_eq!((e.inbound, e.route), (Inbound::Udp, RouteKind::Direct));
+    let (code, _s) = socks5_as_tun(proxy.port(), app, UDP_ROUTE, "localhost", 53).await;
+    assert_eq!(code, 0, "association granted");
+}

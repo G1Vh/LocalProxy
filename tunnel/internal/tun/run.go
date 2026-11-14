@@ -18,14 +18,18 @@ package tun
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/G1Vh/LocalProxy/tunnel/internal/core"
 )
 
 // Run serves one TUN session until LocalProxy lets go (or stop closes).
@@ -68,7 +72,15 @@ func Run(control, token, socks string, parentPID int, stop <-chan struct{}) erro
 	defer sys.Close()
 	pinger := &IcmpPinger{}
 	pinger.SetSource(sys.Physical.Addr4)
-	eng, err := Start(sys.Dev, Options{Socks: socks, DNS: sys.Physical.UpstreamDNS(), Ping: pinger.Ping, Owner: ProcessOf, MTU: mtu})
+	// Direct routes we open ourselves, pinned to the physical interface (or
+	// they would come back into the TUN); the pin follows network changes.
+	var bind atomic.Pointer[core.Bind]
+	bind.Store(&core.Bind{V4: sys.Physical.Index4, V6: sys.Physical.Index6})
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		d := net.Dialer{Control: bind.Load().Control}
+		return d.DialContext(ctx, network, addr)
+	}
+	eng, err := Start(sys.Dev, Options{Socks: socks, DNS: sys.Physical.UpstreamDNS(), Ping: pinger.Ping, Owner: ProcessOf, Dial: dial, MTU: mtu})
 	if err != nil {
 		return fail(err)
 	}
@@ -91,6 +103,7 @@ func Run(control, token, socks string, parentPID int, stop <-chan struct{}) erro
 
 	// Another network: new DNS and ping source here, a new pin in LocalProxy.
 	stopWatch := sys.Watch(func(p Physical) {
+		bind.Store(&core.Bind{V4: p.Index4, V6: p.Index6})
 		eng.SetDNS(p.UpstreamDNS())
 		pinger.SetSource(p.Addr4)
 		send(map[string]any{"event": "interface", "v4": p.Index4, "v6": p.Index6})

@@ -19,8 +19,21 @@ import (
 
 const socksTimeout = 10 * time.Second
 
-// processUser is the username that names the program; see socksHandshake.
-const processUser = "process"
+const (
+	// processUser is the username that names the program; see socksHandshake.
+	processUser = "process"
+	// tunUser names it too and says we open direct routes ourselves (see
+	// direct.go): LocalProxy then answers repDirect instead of dialing.
+	tunUser = "tun"
+	// cmdUDPRoute is LocalProxy's own command: a UDP flow to the address,
+	// answered with repDirect or an ordinary association.
+	cmdUDPRoute = 0x83
+	repDirect   = 0x80
+)
+
+// errDirect: LocalProxy left the route to us; the connection stays open
+// for the report.
+var errDirect = errors.New("SOCKS5: direct route")
 
 // processName fits an exe path into the 255 bytes a password may take.
 func processName(path string) string {
@@ -53,8 +66,10 @@ func socksAddr(host string, port uint16) []byte {
 }
 
 // socksHandshake connects to the proxy and sends the request; process (an
-// exe path, may be empty) names the program behind it.
-func socksHandshake(ctx context.Context, proxy, process string, cmd byte, host string, port uint16) (net.Conn, []byte, error) {
+// exe path, may be empty) names the program behind it, and delegate asks for
+// direct routes to be left to us (errDirect, with the connection open). The
+// greeting, login and request go in one write: LocalProxy reads them in turn.
+func socksHandshake(ctx context.Context, proxy, process string, delegate bool, cmd byte, host string, port uint16) (net.Conn, []byte, error) {
 	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", proxy)
 	if err != nil {
 		return nil, nil, err
@@ -69,11 +84,21 @@ func socksHandshake(ctx context.Context, proxy, process string, cmd byte, host s
 		return nil, nil, err
 	}
 	process = processName(process)
+	user := processUser
+	if delegate {
+		user = tunUser
+	}
 	method := byte(0)
-	if process != "" {
+	if process != "" || delegate {
 		method = 2
 	}
-	if _, err := c.Write([]byte{5, 1, method}); err != nil {
+	msg := []byte{5, 1, method}
+	if method == 2 {
+		msg = append(append(msg, 1, byte(len(user))), user...)
+		msg = append(append(msg, byte(len(process))), process...)
+	}
+	msg = append(append(msg, 5, cmd, 0), socksAddr(host, port)...)
+	if _, err := c.Write(msg); err != nil {
 		return fail(err)
 	}
 	var m [2]byte
@@ -84,11 +109,6 @@ func socksHandshake(ctx context.Context, proxy, process string, cmd byte, host s
 		return fail(errors.New("SOCKS5: способ входа не принят"))
 	}
 	if method == 2 {
-		auth := append([]byte{1, byte(len(processUser))}, processUser...)
-		auth = append(append(auth, byte(len(process))), process...)
-		if _, err := c.Write(auth); err != nil {
-			return fail(err)
-		}
 		if _, err := io.ReadFull(c, m[:]); err != nil {
 			return fail(err)
 		}
@@ -96,15 +116,12 @@ func socksHandshake(ctx context.Context, proxy, process string, cmd byte, host s
 			return fail(errors.New("SOCKS5: вход не принят"))
 		}
 	}
-	req := append([]byte{5, cmd, 0}, socksAddr(host, port)...)
-	if _, err := c.Write(req); err != nil {
-		return fail(err)
-	}
 	var h [4]byte
 	if _, err := io.ReadFull(c, h[:]); err != nil {
 		return fail(err)
 	}
-	if h[1] != 0 {
+	direct := delegate && h[1] == repDirect
+	if h[1] != 0 && !direct {
 		return fail(fmt.Errorf("SOCKS5: отказ %d", h[1]))
 	}
 	var n int
@@ -127,12 +144,16 @@ func socksHandshake(ctx context.Context, proxy, process string, cmd byte, host s
 		return fail(err)
 	}
 	c.SetDeadline(time.Time{})
+	if direct {
+		return c, nil, errDirect
+	}
 	return c, append([]byte{h[3]}, bound...), nil
 }
 
-// socksConnect opens a TCP tunnel to host:port through the proxy.
-func socksConnect(ctx context.Context, proxy, process, host string, port uint16) (net.Conn, error) {
-	c, _, err := socksHandshake(ctx, proxy, process, 1, host, port)
+// socksConnect opens a TCP tunnel to host:port through the proxy; with
+// delegate, errDirect hands the dial to us.
+func socksConnect(ctx context.Context, proxy, process string, delegate bool, host string, port uint16) (net.Conn, error) {
+	c, _, err := socksHandshake(ctx, proxy, process, delegate, 1, host, port)
 	return c, err
 }
 
@@ -145,10 +166,30 @@ type socksAssociation struct {
 }
 
 func socksAssociate(ctx context.Context, proxy, process string) (*socksAssociation, error) {
-	control, bound, err := socksHandshake(ctx, proxy, process, 3, "0.0.0.0", 0)
+	control, bound, err := socksHandshake(ctx, proxy, process, false, 3, "0.0.0.0", 0)
 	if err != nil {
 		return nil, err
 	}
+	return associated(control, bound, proxy)
+}
+
+// socksUDPRoute asks about one UDP flow to host:port: an association if it
+// goes through LocalProxy, or errDirect and the control connection if it is
+// ours to relay.
+func socksUDPRoute(ctx context.Context, proxy, process, host string, port uint16) (*socksAssociation, net.Conn, error) {
+	control, bound, err := socksHandshake(ctx, proxy, process, true, cmdUDPRoute, host, port)
+	if errors.Is(err, errDirect) {
+		return nil, control, err
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	a, err := associated(control, bound, proxy)
+	return a, nil, err
+}
+
+// associated finishes an association the proxy granted.
+func associated(control net.Conn, bound []byte, proxy string) (*socksAssociation, error) {
 	relay, err := relayAddr(bound, proxy)
 	if err != nil {
 		control.Close()

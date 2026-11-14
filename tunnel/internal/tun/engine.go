@@ -51,7 +51,10 @@ type Options struct {
 	// Owner names the program behind a flow (src is its side): an exe path
 	// or "". Nil leaves programs unnamed.
 	Owner func(src, dst netip.AddrPort, udp bool) string
-	MTU   int
+	// Dial opens a direct route from the physical interface, so that such
+	// routes skip LocalProxy (see direct.go); nil sends everything there.
+	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	MTU  int
 }
 
 // Stats for the window.
@@ -63,16 +66,17 @@ type Stats struct {
 }
 
 type Engine struct {
-	dev    tun.Device
-	stack  *stack.Stack
-	ep     *channel.Endpoint
-	opts   Options
-	dns    *resolver
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	wmu    sync.Mutex
-	pings  chan struct{}
+	dev       tun.Device
+	stack     *stack.Stack
+	ep        *channel.Endpoint
+	opts      Options
+	dns       *resolver
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	closeOnce sync.Once
+	wmu       sync.Mutex
+	pings     chan struct{}
 
 	tcpCount, udpCount, dnsCount, refused atomic.Int64
 }
@@ -155,11 +159,13 @@ func (e *Engine) Stats() Stats {
 
 // Close stops the engine; the device is closed too.
 func (e *Engine) Close() {
-	e.cancel()
-	e.dev.Close()
-	e.ep.Close()
-	e.stack.Close()
-	e.wg.Wait()
+	e.closeOnce.Do(func() {
+		e.cancel()
+		e.dev.Close()
+		e.ep.Close()
+		e.stack.Close()
+		e.wg.Wait()
+	})
 }
 
 func (e *Engine) fromDevice() {
@@ -253,7 +259,7 @@ func (e *Engine) handleTCP(r *tcp.ForwarderRequest) {
 	src := netip.AddrPortFrom(addrOf(id.RemoteAddress), id.RemotePort)
 	go func() {
 		if port == 53 && isDNSAddr(dst) {
-			e.acceptTCP(r, nil)
+			e.acceptTCP(r, nil, nil)
 			return
 		}
 		host, ok := e.target(dst)
@@ -266,25 +272,42 @@ func (e *Engine) handleTCP(r *tcp.ForwarderRequest) {
 		// instead of an accepted connection that goes nowhere.
 		ctx, cancel := context.WithTimeout(e.ctx, socksTimeout)
 		process := e.owner(src, netip.AddrPortFrom(dst, port), false)
-		up, err := socksConnect(ctx, e.opts.Socks, process, host, port)
+		up, err := socksConnect(ctx, e.opts.Socks, process, e.delegate(dst), host, port)
 		cancel()
+		var ctl net.Conn
+		if errors.Is(err, errDirect) {
+			ctl, err = up, nil
+			if up = e.dialDirect(ctl, "tcp", netip.AddrPortFrom(dst, port)); up == nil {
+				err = errDirect
+			}
+		}
 		if err != nil {
 			e.refused.Add(1)
 			r.Complete(true)
 			return
 		}
-		e.acceptTCP(r, up)
+		e.acceptTCP(r, up, ctl)
 	}()
 }
 
+// delegate: whether a direct route to dst may be ours to open. A fake
+// address has no real destination behind it: LocalProxy resolves the name.
+func (e *Engine) delegate(dst netip.Addr) bool {
+	return e.opts.Dial != nil && !isFake(dst)
+}
+
 // acceptTCP completes the handshake with the program and pipes the
-// connection to up (or serves DNS over TCP when up is nil).
-func (e *Engine) acceptTCP(r *tcp.ForwarderRequest, up net.Conn) {
+// connection to up (or serves DNS over TCP when up is nil). A direct route
+// we opened ourselves has ctl, LocalProxy's connection for the byte counts.
+func (e *Engine) acceptTCP(r *tcp.ForwarderRequest, up, ctl net.Conn) {
 	var wq waiter.Queue
 	ep, terr := r.CreateEndpoint(&wq)
 	if terr != nil {
 		if up != nil {
 			up.Close()
+		}
+		if ctl != nil {
+			ctl.Close()
 		}
 		r.Complete(true)
 		return
@@ -297,20 +320,32 @@ func (e *Engine) acceptTCP(r *tcp.ForwarderRequest, up net.Conn) {
 		return
 	}
 	e.tcpCount.Add(1)
-	pipe(conn, up)
+	if ctl == nil {
+		pipe(conn, up, nil)
+		return
+	}
+	t := newTally(ctl)
+	pipe(conn, up, t)
+	t.close()
 }
 
 // copyBufs: 256 KiB per direction moves a bulk transfer in a few large
 // writes instead of many 32 KiB ones (io.Copy's default).
 var copyBufs = sync.Pool{New: func() any { b := make([]byte, 256<<10); return &b }}
 
-func pipe(a, b net.Conn) {
+// pipe joins the program's connection a to b; t, if any, counts the bytes
+// (a → b is "up").
+func pipe(a, b net.Conn, t *tally) {
 	done := make(chan struct{}, 2)
-	cp := func(dst, src net.Conn) {
+	cp := func(dst, src net.Conn, n *atomic.Uint64) {
 		buf := copyBufs.Get().(*[]byte)
 		// Hidden behind plain Reader/Writer so that io.CopyBuffer uses buf
 		// rather than the connections' own ReadFrom/WriteTo with small buffers.
-		io.CopyBuffer(struct{ io.Writer }{dst}, struct{ io.Reader }{src}, *buf)
+		var r io.Reader = struct{ io.Reader }{src}
+		if n != nil {
+			r = counted{src, n}
+		}
+		io.CopyBuffer(struct{ io.Writer }{dst}, r, *buf)
 		copyBufs.Put(buf)
 		if cw, ok := dst.(interface{ CloseWrite() error }); ok {
 			cw.CloseWrite()
@@ -319,8 +354,12 @@ func pipe(a, b net.Conn) {
 		}
 		done <- struct{}{}
 	}
-	go cp(a, b)
-	go cp(b, a)
+	var up, down *atomic.Uint64
+	if t != nil {
+		up, down = &t.up, &t.down
+	}
+	go cp(b, a, up)
+	go cp(a, b, down)
 	<-done
 	<-done
 	a.Close()
@@ -393,7 +432,19 @@ func (e *Engine) relayUDP(conn *gonet.UDPConn, src netip.AddrPort, dst netip.Add
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, socksTimeout)
 	process := e.owner(src, netip.AddrPortFrom(dst, port), true)
-	assoc, err := socksAssociate(ctx, e.opts.Socks, process)
+	var assoc *socksAssociation
+	var err error
+	if e.delegate(dst) {
+		var ctl net.Conn
+		assoc, ctl, err = socksUDPRoute(ctx, e.opts.Socks, process, host, port)
+		if errors.Is(err, errDirect) {
+			cancel()
+			e.relayUDPDirect(conn, ctl, netip.AddrPortFrom(dst, port))
+			return
+		}
+	} else {
+		assoc, err = socksAssociate(ctx, e.opts.Socks, process)
+	}
 	cancel()
 	if err != nil {
 		e.refused.Add(1)

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::io;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,7 +15,7 @@ use crate::matcher::{Decision, RuleSet};
 use crate::outbound::{ConnectError, Upstream, basic_auth, connect_direct, connect_server};
 use crate::pac;
 use crate::stream::{BoxIo, TargetAddr};
-use crate::traffic::{Counted, Traffic};
+use crate::traffic::{Counted, Counters, Traffic};
 
 const EVENT_BUFFER: usize = 1024;
 
@@ -147,6 +148,64 @@ pub enum HttpHop {
     Proxy { authorization: Option<String> },
 }
 
+/// What routing opened: a stream, or a direct connection left to the
+/// client to open itself (the TUN dials it bound to the physical interface,
+/// sparing the bytes a round trip through LocalProxy).
+pub enum Opened {
+    Stream(BoxIo),
+    ByClient(DirectByClient),
+}
+
+/// A direct route the client dials itself. The feed hears of it once the
+/// client says how the dial went, see [`DirectByClient::finish`].
+#[must_use]
+pub struct DirectByClient {
+    inbound: Inbound,
+    target: TargetAddr,
+    route: RouteKind,
+    rule_id: Option<Uuid>,
+    process: Option<String>,
+    udp: bool,
+}
+
+impl DirectByClient {
+    /// Records the client's dial: an event for the feed, and counters for
+    /// the bytes it will report if the dial succeeded.
+    pub fn finish(self, router: &Router, error: Option<io::Error>) -> Option<Arc<Counters>> {
+        let error = error.map(|source| {
+            ConnectError::Target {
+                target: self.target.to_string(),
+                source,
+            }
+            .to_string()
+        });
+        let route = if error.is_some() {
+            RouteKind::Failed
+        } else {
+            self.route
+        };
+        let failed = error.is_some();
+        router.emit(
+            self.inbound,
+            &self.target,
+            route,
+            self.rule_id,
+            None,
+            self.process.as_deref(),
+            error,
+        );
+        if failed {
+            return None;
+        }
+        let traffic = router.traffic();
+        Some(if self.udp {
+            traffic.open_udp(&self.target.host, None)
+        } else {
+            traffic.open(&self.target.host, None)
+        })
+    }
+}
+
 pub struct Router {
     port: u16,
     snapshot: RwLock<Arc<Snapshot>>,
@@ -221,9 +280,39 @@ impl Router {
         inbound: Inbound,
         process: Option<&str>,
     ) -> Result<BoxIo, RouteError> {
-        self.route(target, inbound, false, process)
+        self.route(target, inbound, false, false, process)
             .await
-            .map(|(io, _)| io)
+            .map(|r| r.into_io().0)
+    }
+
+    /// Like [`connect`](Self::connect), but a direct route is left to the
+    /// client: nothing is dialed here and the result is [`Opened::ByClient`].
+    pub async fn connect_or_delegate(
+        &self,
+        target: &TargetAddr,
+        inbound: Inbound,
+        process: Option<&str>,
+    ) -> Result<Opened, RouteError> {
+        Ok(
+            match self.route(target, inbound, false, true, process).await? {
+                Routed::Io(io, _) => Opened::Stream(io),
+                Routed::ByClient(d) => Opened::ByClient(d),
+            },
+        )
+    }
+
+    /// A UDP flow to `target` the client relays itself if the rules send it
+    /// direct; `None` means it is not direct (the client then associates).
+    pub fn udp_direct(&self, target: &TargetAddr, process: Option<&str>) -> Option<DirectByClient> {
+        let decision = self.snapshot().rules.decide_for(&target.host, process);
+        (decision.action == RuleAction::Direct).then(|| DirectByClient {
+            inbound: Inbound::Udp,
+            target: target.clone(),
+            route: RouteKind::Direct,
+            rule_id: decision.rule_id,
+            process: process.map(str::to_owned),
+            udp: true,
+        })
     }
 
     /// A stream for forwarding plain HTTP to `target`. Through an HTTP upstream
@@ -234,7 +323,9 @@ impl Router {
         target: &TargetAddr,
         process: Option<&str>,
     ) -> Result<(BoxIo, HttpHop), RouteError> {
-        self.route(target, Inbound::Http, true, process).await
+        self.route(target, Inbound::Http, true, false, process)
+            .await
+            .map(Routed::into_io)
     }
 
     /// A TCP tunnel for a port forward: always through `outbound` (or the
@@ -254,12 +345,13 @@ impl Router {
             target,
             Inbound::Forward,
             false,
+            false,
             decision,
             OnOutboundDown::Block,
             process,
         )
         .await
-        .map(|(io, _)| io)
+        .map(|r| r.into_io().0)
     }
 
     async fn route(
@@ -267,27 +359,49 @@ impl Router {
         target: &TargetAddr,
         inbound: Inbound,
         plain_http: bool,
+        delegate: bool,
         process: Option<&str>,
-    ) -> Result<(BoxIo, HttpHop), RouteError> {
+    ) -> Result<Routed, RouteError> {
         let snap = self.snapshot();
         let decision = snap.rules.decide_for(&target.host, process);
-        self.route_decided(target, inbound, plain_http, decision, snap.on_down, process)
-            .await
+        self.route_decided(
+            target,
+            inbound,
+            plain_http,
+            delegate,
+            decision,
+            snap.on_down,
+            process,
+        )
+        .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn route_decided(
         &self,
         target: &TargetAddr,
         inbound: Inbound,
         plain_http: bool,
+        delegate: bool,
         decision: Decision,
         on_down: OnOutboundDown,
         process: Option<&str>,
-    ) -> Result<(BoxIo, HttpHop), RouteError> {
+    ) -> Result<Routed, RouteError> {
         let snap = self.snapshot();
+        let by_client = |route| {
+            Routed::ByClient(DirectByClient {
+                inbound,
+                target: target.clone(),
+                route,
+                rule_id: decision.rule_id,
+                process: process.map(str::to_owned),
+                udp: false,
+            })
+        };
 
         let mut outbound_id = None;
         let result = match decision.action {
+            RuleAction::Direct if delegate => return Ok(by_client(RouteKind::Direct)),
             RuleAction::Direct => direct(target, RouteKind::Direct).await,
             RuleAction::Proxy => {
                 let (id, upstream) = snap.outbound_for(&decision);
@@ -318,6 +432,9 @@ impl Router {
                         OnOutboundDown::Block => Err(RouteError::Blocked(e.to_string())),
                         OnOutboundDown::Direct => {
                             tracing::warn!(%target, "{e}; going direct by policy");
+                            if delegate {
+                                return Ok(by_client(RouteKind::Fallback));
+                            }
                             direct(target, RouteKind::Fallback).await
                         }
                     },
@@ -345,8 +462,23 @@ impl Router {
         result.map(|((io, hop), route)| {
             let via = outbound_id.filter(|_| route == RouteKind::Proxy);
             let counters = self.traffic.open(&target.host, via);
-            (Box::new(Counted::new(io, counters)) as BoxIo, hop)
+            Routed::Io(Box::new(Counted::new(io, counters)) as BoxIo, hop)
         })
+    }
+}
+
+enum Routed {
+    Io(BoxIo, HttpHop),
+    ByClient(DirectByClient),
+}
+
+impl Routed {
+    /// For callers that never ask to delegate.
+    fn into_io(self) -> (BoxIo, HttpHop) {
+        match self {
+            Self::Io(io, hop) => (io, hop),
+            Self::ByClient(_) => unreachable!("delegation was not asked for"),
+        }
     }
 }
 
